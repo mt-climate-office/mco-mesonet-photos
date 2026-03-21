@@ -312,6 +312,18 @@
       justify-content: center;
     }
 
+    /* Direction select — hidden on wide screens, shown on narrow */
+    .dir-select { display: none; }
+
+    @media (max-width: 600px) {
+      .brand, .nav-divider { display: none; }
+      .control-label { display: none; }
+      .btn-label { display: none; }
+      .dir-btns { display: none; }
+      .dir-select { display: block; }
+      .nav-btn.icon-only { min-width: 30px; padding: 0.3rem; }
+    }
+
     /* ── Map ───────────────────────────────────────────────────────────────── */
     #map-container {
       flex: 1;
@@ -621,11 +633,19 @@
     <div class="control-group">
       <span class="control-label" aria-hidden="true">Direction</span>
       <div class="dir-btns" id="dir-btns" role="group" aria-label="Camera direction"></div>
+      <select class="time-select dir-select" id="dir-select" aria-label="Camera direction"></select>
     </div>
   </div>
 
   <div class="nav-actions">
-    <button class="nav-btn" id="btn-counties" aria-pressed="false">Counties</button>
+    <button class="nav-btn" id="btn-counties" aria-pressed="false">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none"
+           stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/>
+        <rect x="3" y="14" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/>
+      </svg>
+      <span class="btn-label">Counties</span>
+    </button>
     <button class="nav-btn" id="btn-export" aria-label="Export map as PNG">
       <svg width="14" height="14" viewBox="0 0 24 24" fill="none"
            stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
@@ -633,7 +653,7 @@
         <polyline points="7 10 12 15 17 10"/>
         <line x1="12" y1="15" x2="12" y2="3"/>
       </svg>
-      Export
+      <span class="btn-label">Export</span>
     </button>
     <button class="nav-btn" id="btn-share" aria-label="Copy shareable link">
       <svg width="14" height="14" viewBox="0 0 24 24" fill="none"
@@ -642,7 +662,7 @@
         <line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/>
         <line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/>
       </svg>
-      Share
+      <span class="btn-label">Share</span>
     </button>
     <button class="nav-btn icon-only" id="btn-theme" aria-label="Switch to light mode">
       <!-- icon injected by JS -->
@@ -845,6 +865,8 @@ document.getElementById("dir-btns").addEventListener("click", (e) => {
   document.querySelectorAll(".dir-btn").forEach(b => b.setAttribute("aria-pressed", "false"));
   btn.setAttribute("aria-pressed", "true");
   currentDir = btn.dataset.dir;
+  const _ds = document.getElementById("dir-select");
+  if (_ds) _ds.value = currentDir;
   updateUrl();
   refreshMapImages();
 });
@@ -1240,14 +1262,31 @@ Promise.all([
   if (!allDirs.includes(currentDir)) currentDir = allDirs.includes("N") ? "N" : allDirs[0];
   updateUrl();
 
-  const dirBtnsEl = document.getElementById("dir-btns");
+  const dirBtnsEl   = document.getElementById("dir-btns");
+  const dirSelectEl = document.getElementById("dir-select");
   allDirs.forEach(dir => {
+    const label = DIR_LABELS[dir] || dir;
     const btn = document.createElement("button");
     btn.className  = "dir-btn";
     btn.dataset.dir = dir;
     btn.textContent = dir === "SNOW" ? "Snow" : dir;
     btn.setAttribute("aria-pressed", dir === currentDir ? "true" : "false");
     dirBtnsEl.append(btn);
+
+    const opt = document.createElement("option");
+    opt.value       = dir;
+    opt.textContent = label;
+    opt.selected    = dir === currentDir;
+    dirSelectEl.append(opt);
+  });
+
+  dirSelectEl.addEventListener("change", () => {
+    currentDir = dirSelectEl.value;
+    document.querySelectorAll(".dir-btn").forEach(b =>
+      b.setAttribute("aria-pressed", b.dataset.dir === currentDir ? "true" : "false")
+    );
+    updateUrl();
+    refreshMapImages();
   });
 
   const container = document.getElementById("map-container");
