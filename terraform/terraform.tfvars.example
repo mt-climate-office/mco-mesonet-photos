@@ -1,0 +1,6 @@
+aws_region     = "us-west-2"
+aws_profile    = "mco"
+project_name   = "mco-mesonet"
+s3_bucket_name = "mco-mesonet"
+github_repo    = "mt-climate-office/mesonet-photo-explorer"
+aws_account_id = "YOUR_ACCOUNT_ID"

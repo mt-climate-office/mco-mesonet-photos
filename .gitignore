@@ -5,3 +5,13 @@
 .httr-oauth
 .DS_Store
 .quarto
+
+# Local photo mirror cache (can be large — do not commit)
+cache/
+
+# Terraform
+terraform/.terraform/
+terraform/.terraform.lock.hcl
+terraform/terraform.tfstate
+terraform/terraform.tfstate.backup
+terraform/terraform.tfvars

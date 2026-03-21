@@ -1,0 +1,1491 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Montana Mesonet Photo Explorer</title>
+  <meta name="description" content="Browse Montana Mesonet station photos by date, time, and camera direction. A service of the Montana Climate Office.">
+
+  <!-- Open Graph / social sharing -->
+  <meta property="og:type"        content="website">
+  <meta property="og:site_name"   content="Montana Mesonet Photo Explorer">
+  <meta property="og:title"       content="Montana Mesonet Photo Explorer">
+  <meta property="og:description" content="Browse Montana Mesonet station photos by date, time, and camera direction. A service of the Montana Climate Office.">
+  <meta property="og:url"          content="">
+  <meta property="og:image"        content="">
+  <meta property="og:image:type"   content="image/png">
+  <meta property="og:image:alt"    content="Map of Montana Mesonet weather stations with station photos">
+
+  <!-- Twitter / X card -->
+  <meta name="twitter:card"        content="summary_large_image">
+  <meta name="twitter:title"       content="Montana Mesonet Photo Explorer">
+  <meta name="twitter:description" content="Browse Montana Mesonet station photos by date, time, and camera direction. A service of the Montana Climate Office.">
+  <meta name="twitter:image"       content="">
+
+  <!-- Prevent theme flash -->
+  <script>
+    (function () {
+      const saved = localStorage.getItem("mco-theme");
+      const prefersDark = window.matchMedia("(prefers-color-scheme: dark)").matches;
+      document.documentElement.setAttribute("data-theme", saved || (prefersDark ? "dark" : "light"));
+    })();
+  </script>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <script src="https://cdn.jsdelivr.net/npm/d3@7"></script>
+  <script src="https://cdn.jsdelivr.net/npm/topojson-client@3"></script>
+  <style>
+    /* ── Theme tokens ──────────────────────────────────────────────────────── */
+    :root {
+      --bg-deep:     #161b22;
+      --bg-surface:  #1e2530;
+      --bg-raised:   #2c3545;
+      --border:      #3a4558;
+      --border-glass: rgba(255,255,255,0.08);
+      --text-primary:   #e8ecf0;
+      --text-secondary: #c0cad6;
+      --text-muted:     #8a99b0;
+      --text-dim:       #6b7a90;
+      --accent:      #1a6faf;
+      --accent-light: #5aaee8;
+      --accent-dk:   #114f80;
+      --accent-hover: rgba(26,111,175,0.10);
+      --brand-gradient: linear-gradient(135deg, #1a8cff, #5aaee8, #8ad4ff, #5aaee8, #1a8cff);
+      --glass:       rgba(30,37,48,0.82);
+      --shadow:      0 4px 24px rgba(0,0,0,0.4);
+      --transition:  0.2s cubic-bezier(0.4,0,0.2,1);
+      --radius-sm:   4px;
+      --radius-md:   8px;
+      --radius-lg:   12px;
+    }
+
+    [data-theme="light"] {
+      --bg-deep:     #f0f2f5;
+      --bg-surface:  #ffffff;
+      --bg-raised:   #e8ecf0;
+      --border:      #c8cdd5;
+      --border-glass: rgba(0,0,0,0.08);
+      --text-primary:   #1a1a2e;
+      --text-secondary: #3a3f4b;
+      --text-muted:     #5a6070;
+      --text-dim:       #7a8190;
+      --accent:      #1a6faf;
+      --accent-light: #1563a0;
+      --accent-dk:   #0d4f7a;
+      --accent-hover: rgba(26,111,175,0.08);
+      --brand-gradient: linear-gradient(135deg, #0a4a7a, #1266a8, #0d7fd4, #1266a8, #0a4a7a);
+      --glass:       rgba(255,255,255,0.88);
+      --shadow:      0 4px 24px rgba(0,0,0,0.1);
+    }
+
+    /* ── Reset & base ──────────────────────────────────────────────────────── */
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: 'Outfit', system-ui, -apple-system, sans-serif;
+      background: var(--bg-deep);
+      color: var(--text-primary);
+      height: 100dvh;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+      transition: background var(--transition), color var(--transition);
+    }
+
+    :focus-visible {
+      outline: 2px solid var(--accent-light);
+      outline-offset: 2px;
+    }
+
+    /* ── Navbar ────────────────────────────────────────────────────────────── */
+    #navbar {
+      flex-shrink: 0;
+      position: relative;
+      display: flex;
+      align-items: center;
+      gap: 0.75rem;
+      padding: 0 1rem;
+      min-height: 52px;
+      background: var(--glass);
+      backdrop-filter: blur(16px);
+      -webkit-backdrop-filter: blur(16px);
+      border-bottom: 1px solid var(--border);
+      flex-wrap: wrap;
+      row-gap: 0.4rem;
+      padding-top: 0.4rem;
+      padding-bottom: 0.4rem;
+      transition: background var(--transition), border-color var(--transition);
+    }
+
+    /* Gradient underline */
+    #navbar::after {
+      content: '';
+      position: absolute;
+      bottom: 0; left: 0; right: 0;
+      height: 2px;
+      background: linear-gradient(90deg,
+        var(--accent-dk), var(--accent), var(--accent-light), var(--accent));
+      pointer-events: none;
+    }
+
+    /* Logo */
+    .logo-link { display: flex; flex-shrink: 0; }
+    .logo-img {
+      width: 40px;
+      height: 40px;
+      border-radius: 6px;
+      display: block;
+    }
+
+    .nav-divider {
+      width: 1px;
+      height: 28px;
+      background: var(--border);
+      flex-shrink: 0;
+    }
+
+    /* Brand */
+    .brand {
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      flex-shrink: 0;
+      line-height: 1.2;
+    }
+
+    .brand-title {
+      font-size: 0.65rem;
+      font-weight: 500;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      color: var(--text-muted);
+      white-space: nowrap;
+      line-height: 1.2;
+    }
+
+    .brand-subtitle {
+      font-size: 0.55rem;
+      font-weight: 400;
+      letter-spacing: 0.04em;
+      font-style: italic;
+      color: var(--text-dim);
+      white-space: nowrap;
+      line-height: 1.2;
+    }
+
+    /* Controls */
+    .controls {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+      flex-wrap: wrap;
+      row-gap: 0.3rem;
+      /* push nav-actions to the far right */
+      margin-right: auto;
+    }
+
+    .control-group {
+      display: flex;
+      align-items: center;
+      gap: 0.3rem;
+    }
+
+    .control-label {
+      font-size: 0.7rem;
+      font-weight: 500;
+      letter-spacing: 0.05em;
+      text-transform: uppercase;
+      color: var(--text-muted);
+      white-space: nowrap;
+    }
+
+    input[type="date"],
+    select.time-select {
+      background: none;
+      color: var(--text-primary);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-md);
+      padding: 0 0.55rem;
+      font-size: 0.78rem;
+      font-family: inherit;
+      cursor: pointer;
+      height: 34px;
+      line-height: 34px;
+      /* Normalize cross-browser date-input appearance */
+      -webkit-appearance: none;
+      appearance: none;
+      transition: var(--transition);
+    }
+
+    /* Chrome/Edge date input has an internal calendar icon — keep it visible */
+    input[type="date"]::-webkit-calendar-picker-indicator {
+      filter: invert(60%);
+      cursor: pointer;
+    }
+
+    [data-theme="light"] input[type="date"]::-webkit-calendar-picker-indicator {
+      filter: invert(30%);
+    }
+
+    input[type="date"]:hover,
+    select.time-select:hover {
+      background: var(--accent-hover);
+      border-color: var(--accent);
+    }
+
+    input[type="date"]:focus,
+    select.time-select:focus {
+      border-color: var(--accent-light);
+      background: var(--accent-hover);
+    }
+
+    .dir-btns {
+      display: flex;
+      gap: 0.2rem;
+      flex-wrap: wrap;
+    }
+
+    .dir-btn {
+      padding: 6px 10px;
+      min-height: 34px;
+      min-width: 36px;
+      border: 1px solid var(--border);
+      border-radius: var(--radius-md);
+      background: none;
+      color: var(--text-muted);
+      cursor: pointer;
+      font-size: 0.78rem;
+      font-weight: 600;
+      font-family: inherit;
+      transition: var(--transition);
+    }
+
+    .dir-btn:hover { background: var(--accent-hover); border-color: var(--accent); color: var(--text-primary); }
+    .dir-btn[aria-pressed="true"] {
+      background: var(--accent);
+      border-color: var(--accent-light);
+      color: #fff;
+    }
+
+    /* Nav action buttons */
+    .nav-actions {
+      display: flex;
+      align-items: center;
+      gap: 0.35rem;
+      flex-shrink: 0;
+    }
+
+    .nav-btn {
+      display: flex;
+      align-items: center;
+      gap: 5px;
+      padding: 6px 12px;
+      min-height: 34px;
+      border: 1px solid var(--border);
+      border-radius: var(--radius-md);
+      background: none;
+      color: var(--text-secondary);
+      cursor: pointer;
+      font-size: 0.78rem;
+      font-weight: 500;
+      font-family: inherit;
+      white-space: nowrap;
+      flex-shrink: 0;
+      transition: var(--transition);
+    }
+
+    .nav-btn:hover {
+      background: var(--accent-hover);
+      border-color: var(--accent);
+      color: var(--text-primary);
+    }
+
+    .nav-btn svg {
+      flex-shrink: 0;
+      stroke: currentColor;
+    }
+
+    .nav-btn.icon-only {
+      padding: 0.4rem;
+      min-width: 34px;
+      justify-content: center;
+    }
+
+    /* ── Map ───────────────────────────────────────────────────────────────── */
+    #map-container {
+      flex: 1;
+      min-height: 0;
+      position: relative;
+    }
+
+    svg#map {
+      width: 100%;
+      height: 100%;
+      display: block;
+    }
+
+    /* SVG element classes that use theme tokens */
+    .map-bg        { fill: var(--bg-deep); transition: fill var(--transition); }
+    .cell-border   { fill: none; stroke: var(--border); stroke-width: 0.6; pointer-events: none; }
+    .state-outline { fill: none; stroke: var(--accent-light); stroke-width: 1.5; pointer-events: none; }
+    .county-overlay { pointer-events: none; }
+    .county-overlay path { fill: none; stroke: var(--text-muted); stroke-width: 0.5; opacity: 0.5; }
+    .nav-btn[aria-pressed="true"] { background: var(--accent-hover); border-color: var(--accent); color: var(--text-primary); }
+
+    .cell-hit {
+      fill: transparent;
+      cursor: pointer;
+    }
+
+    .cell-hit:focus,
+    .cell-hit:focus-visible {
+      outline: none;
+    }
+
+    .cell-hit:hover ~ .cell-hover-overlay,
+    .cell-hit:focus ~ .cell-hover-overlay {
+      opacity: 0.35;
+    }
+
+    .cell-hover-overlay {
+      fill: var(--accent-light);
+      pointer-events: none;
+      opacity: 0;
+      transition: opacity 0.1s;
+    }
+
+    /* ── Tooltip ───────────────────────────────────────────────────────────── */
+    #tooltip {
+      position: fixed;
+      background: var(--glass);
+      border: 1px solid var(--accent-light);
+      border-radius: 5px;
+      padding: 0.3rem 0.6rem;
+      font-size: 0.75rem;
+      color: var(--text-primary);
+      pointer-events: none;
+      z-index: 50;
+      white-space: nowrap;
+      opacity: 0;
+      transition: opacity 0.1s;
+      backdrop-filter: blur(8px);
+    }
+
+    #tooltip.visible { opacity: 1; }
+
+    /* ── Toast ─────────────────────────────────────────────────────────────── */
+    #toast {
+      position: fixed;
+      bottom: 1.5rem;
+      left: 50%;
+      transform: translateX(-50%) translateY(0.75rem);
+      background: var(--bg-surface);
+      border: 1px solid var(--accent-light);
+      border-radius: 6px;
+      padding: 0.5rem 1rem;
+      font-size: 0.82rem;
+      color: var(--text-primary);
+      opacity: 0;
+      transition: opacity 0.2s, transform 0.2s;
+      pointer-events: none;
+      z-index: 400;
+      box-shadow: var(--shadow);
+    }
+
+    #toast.visible {
+      opacity: 1;
+      transform: translateX(-50%) translateY(0);
+    }
+
+    /* ── Modal (dialog) ────────────────────────────────────────────────────── */
+    #modal {
+      background: transparent;
+      border: none;
+      padding: 1rem;
+      position: fixed;
+      inset: 0;
+      margin: auto;
+      width: fit-content;
+      height: fit-content;
+      max-width: calc(100vw - 2rem);
+      max-height: calc(100dvh - 2rem);
+    }
+
+    #modal::backdrop {
+      background: rgba(0, 0, 0, 0.7);
+      backdrop-filter: blur(4px);
+    }
+
+    .modal-box {
+      background: var(--bg-surface);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      width: min(860px, calc(100vw - 4rem));
+      max-height: calc(100dvh - 4rem);
+      overflow-y: auto;
+      padding: 1.25rem;
+      box-shadow: var(--shadow);
+    }
+
+    .modal-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+      margin-bottom: 1rem;
+      gap: 1rem;
+    }
+
+    .modal-station-name {
+      font-size: 1.1rem;
+      font-weight: 700;
+      color: var(--accent-light);
+    }
+
+    .modal-timestamp {
+      font-size: 0.75rem;
+      color: var(--text-muted);
+      margin-top: 0.15rem;
+    }
+
+    .modal-close {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background: none;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      color: var(--text-muted);
+      font-size: 1.2rem;
+      cursor: pointer;
+      line-height: 1;
+      flex-shrink: 0;
+      min-width: 34px;
+      min-height: 34px;
+      transition: color var(--transition), border-color var(--transition);
+    }
+
+    .modal-close:hover { color: var(--text-primary); border-color: var(--accent-light); }
+
+    .photo-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+      gap: 0.75rem;
+    }
+
+    .photo-card { text-align: center; }
+
+    .photo-card img {
+      width: 100%;
+      aspect-ratio: 4 / 3;
+      object-fit: cover;
+      border-radius: 6px;
+      background: var(--bg-deep);
+      border: 1px solid var(--border);
+      display: block;
+      cursor: zoom-in;
+    }
+
+    /* ── Lightbox ───────────────────────────────────────────────────────────── */
+    #lightbox {
+      background: transparent;
+      border: none;
+      padding: 0;
+      position: fixed;
+      inset: 0;
+      margin: auto;
+      width: fit-content;
+      height: fit-content;
+      max-width: calc(100vw - 2rem);
+      max-height: calc(100dvh - 2rem);
+    }
+
+    #lightbox::backdrop {
+      background: rgba(0, 0, 0, 0.88);
+      backdrop-filter: blur(6px);
+    }
+
+    #lightbox-img {
+      display: block;
+      max-width: min(1200px, calc(100vw - 2rem));
+      max-height: calc(100dvh - 5rem);
+      border-radius: 6px;
+      object-fit: contain;
+    }
+
+    .lightbox-caption {
+      text-align: center;
+      color: #ccc;
+      font-size: 0.8rem;
+      margin-top: 0.5rem;
+    }
+
+    .lightbox-close {
+      position: absolute;
+      top: -2rem;
+      right: 0;
+      background: none;
+      border: none;
+      color: #fff;
+      font-size: 1.75rem;
+      line-height: 1;
+      cursor: pointer;
+      padding: 0 0.25rem;
+    }
+
+    .photo-dir-label {
+      font-size: 0.7rem;
+      color: var(--text-muted);
+      margin-top: 0.3rem;
+    }
+
+    .modal-dash-link {
+      margin-top: 1rem;
+      font-size: 0.8rem;
+    }
+
+    .modal-dash-link a {
+      color: var(--accent-light);
+      text-decoration: none;
+    }
+
+    .modal-dash-link a:hover { text-decoration: underline; }
+  </style>
+</head>
+<body>
+
+<header id="navbar">
+  <a href="https://climate.umt.edu" target="_blank" rel="noopener noreferrer"
+     class="logo-link" aria-label="Montana Climate Office">
+    <img src="https://climate.umt.edu/assets/images/MCO_logo_icon_only.png"
+         alt="" class="logo-img">
+  </a>
+
+  <div class="nav-divider" aria-hidden="true"></div>
+
+  <div class="brand">
+    <span class="brand-title">Mesonet Photo Explorer</span>
+    <span class="brand-subtitle">A service of the Montana Climate Office</span>
+  </div>
+
+  <div class="controls">
+    <div class="control-group">
+      <label class="control-label" for="date-input">Date</label>
+      <input type="date" id="date-input">
+    </div>
+    <div class="control-group">
+      <label class="control-label" for="time-input">Time</label>
+      <select class="time-select" id="time-input">
+        <option value="09:00:00">9:00 AM</option>
+        <option value="15:00:00" selected>3:00 PM</option>
+      </select>
+    </div>
+    <div class="control-group" role="group" aria-label="Step through time">
+      <button class="nav-btn icon-only" id="btn-prev" aria-label="Previous timestep">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none"
+             stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <polyline points="15 18 9 12 15 6"/>
+        </svg>
+      </button>
+      <button class="nav-btn icon-only" id="btn-next" aria-label="Next timestep">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none"
+             stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <polyline points="9 18 15 12 9 6"/>
+        </svg>
+      </button>
+    </div>
+
+    <div class="control-group">
+      <span class="control-label" aria-hidden="true">Direction</span>
+      <div class="dir-btns" id="dir-btns" role="group" aria-label="Camera direction"></div>
+    </div>
+  </div>
+
+  <div class="nav-actions">
+    <button class="nav-btn" id="btn-counties" aria-pressed="false">Counties</button>
+    <button class="nav-btn" id="btn-export" aria-label="Export map as PNG">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none"
+           stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+        <polyline points="7 10 12 15 17 10"/>
+        <line x1="12" y1="15" x2="12" y2="3"/>
+      </svg>
+      Export
+    </button>
+    <button class="nav-btn" id="btn-share" aria-label="Copy shareable link">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none"
+           stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/>
+        <line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/>
+        <line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/>
+      </svg>
+      Share
+    </button>
+    <button class="nav-btn icon-only" id="btn-theme" aria-label="Switch to light mode">
+      <!-- icon injected by JS -->
+    </button>
+  </div>
+</header>
+
+<div id="map-container">
+  <svg id="map"
+       aria-label="Map of Montana Mesonet weather stations. Tap or click a cell to view photos.">
+  </svg>
+</div>
+
+<div id="tooltip" role="tooltip"></div>
+<div id="toast"  role="status" aria-live="polite"></div>
+
+<dialog id="modal" aria-labelledby="modal-station-name">
+  <div class="modal-box">
+    <div class="modal-header">
+      <div>
+        <div class="modal-station-name" id="modal-station-name"></div>
+        <div class="modal-timestamp"    id="modal-timestamp"></div>
+      </div>
+      <button class="modal-close" id="modal-close" aria-label="Close">&times;</button>
+    </div>
+    <div class="photo-grid"    id="photo-grid"></div>
+    <div class="modal-dash-link" id="modal-dash-link"></div>
+  </div>
+</dialog>
+
+<dialog id="lightbox" aria-label="Full-size station photo">
+  <button class="lightbox-close" id="lightbox-close" aria-label="Close">&times;</button>
+  <img id="lightbox-img" src="" alt="">
+  <div class="lightbox-caption" id="lightbox-caption"></div>
+</dialog>
+
+<script>
+// ── Constants ─────────────────────────────────────────────────────────────────
+
+// CloudFront distribution serving processed WebP photos
+const CLOUDFRONT_BASE = "https://d2m2xaqsigztio.cloudfront.net";
+// Mesonet API: station list with photo directions and start dates
+const PHOTOS_META     = "https://mesonet.climate.umt.edu/api/v2/photos?type=json";
+
+// Canonical direction order and display labels
+const DIR_ORDER  = ["N", "S", "E", "W", "SNOW", "NS", "SS"];
+const DIR_LABELS = {
+  N: "North", S: "South", E: "East", W: "West",
+  SNOW: "Snow Depth", NS: "North Sky", SS: "South Sky",
+};
+
+// stationDirs[stationId] = { dirCode: "YYYY-MM-DD" photoStartDate, … }
+// Populated once the PHOTOS_META fetch resolves.
+let stationDirs = {};
+
+// GeoJSON features stored at module level so the export handler can build a
+// fresh projection at fixed dimensions independently of the browser viewport.
+let _stationFeatures = null;
+let _montanaFeature  = null;
+
+// Fixed export dimensions — every PNG is always this many CSS pixels,
+// rendered at 2× for crisp display on retina screens (actual file: 2800×1400).
+const EXPORT_W = 1400;
+const EXPORT_H = 700;
+
+// ── URL state ─────────────────────────────────────────────────────────────────
+
+const _urlParams = new URLSearchParams(location.search);
+
+// ── Date / time inputs ────────────────────────────────────────────────────────
+
+const dateInput = document.getElementById("date-input");
+const timeInput = document.getElementById("time-input");
+
+const _pad = (n, w = 2) => String(n).padStart(w, "0");
+
+// Return a plain object of Intl date/time parts for a given Date in Mountain Time.
+// Pass includeTime=true to also get hour/minute (hour12: false).
+function mtParts(date, includeTime = false) {
+  const opts = { timeZone: "America/Denver",
+                 year: "numeric", month: "2-digit", day: "2-digit" };
+  if (includeTime) { opts.hour = "2-digit"; opts.minute = "2-digit"; opts.hour12 = false; }
+  return Object.fromEntries(
+    new Intl.DateTimeFormat("en-CA", opts)
+      .formatToParts(date)
+      .filter(({ type }) => type !== "literal")
+      .map(({ type, value }) => [type, value])
+  );
+}
+
+// Returns the latest available photo timestep in Mountain Time, optionally
+// lagged by lagMinutes (default 60) to ensure photos have been processed.
+// Result: { date: "YYYY-MM-DD", time: "HH:MM:SS" }
+function computeMaxTimestep(lagMinutes = 60) {
+  const now    = new Date();
+  const p      = mtParts(now, true);
+  const thresh = (parseInt(p.hour) % 24) * 60 + parseInt(p.minute) - lagMinutes;
+  const times  = [...timeInput.options].map(o => o.value);
+  const today  = `${p.year}-${p.month}-${p.day}`;
+
+  // Walk backward through slots to find the last one within the threshold
+  for (let i = times.length - 1; i >= 0; i--) {
+    const [h, m] = times[i].split(":");
+    if (+h * 60 + +m <= thresh) return { date: today, time: times[i] };
+  }
+
+  // All of today's slots are still in the future — fall back to yesterday's last slot
+  const yp = mtParts(new Date(now.getTime() - 864e5));
+  return { date: `${yp.year}-${yp.month}-${yp.day}`, time: times[times.length - 1] };
+}
+
+const _maxTs       = computeMaxTimestep();
+const { year: _y, month: _mo, day: _d } = mtParts(new Date());
+
+// Constrain the date picker: min set later from API data; max is today in MT.
+dateInput.max   = `${_y}-${_mo}-${_d}`;
+dateInput.value = _urlParams.get("date") || _maxTs.date;
+timeInput.value = _urlParams.get("time") || _maxTs.time;
+
+let currentDir = _urlParams.get("dir") || "N";
+
+// ── Helpers ───────────────────────────────────────────────────────────────────
+
+// "2026-03-21T09:00:00"
+function getSelectedDateTime() {
+  return `${dateInput.value}T${timeInput.value}`;
+}
+
+// Photo filenames zero out minutes+seconds: "2026-03-21T09:00:00" → "2026-03-21T090000"
+function photoUrl(station, dtStr, direction) {
+  const filenameDt = dtStr.slice(0, 13) + "0000";
+  return `${CLOUDFRONT_BASE}/photos/web/${station}/${filenameDt}_${direction}.webp`;
+}
+
+function rawPhotoUrl(station, dtStr, direction) {
+  const filenameDt = dtStr.slice(0, 13) + "0000";
+  return `${CLOUDFRONT_BASE}/photos/raw/${station}/${filenameDt}_${direction}.jpg`;
+}
+
+// "2026-03-21T09:00:00" → "2026-03-21 9:00 AM"
+function formatDisplayTimestamp(dtStr) {
+  const [date, time] = dtStr.split("T");
+  const [h, m] = time.split(":");
+  const hour = parseInt(h);
+  return `${date} ${hour % 12 || 12}:${m} ${hour >= 12 ? "PM" : "AM"}`;
+}
+
+// ── Theme ─────────────────────────────────────────────────────────────────────
+
+const SUN_ICON = `<svg width="15" height="15" viewBox="0 0 24 24" fill="none"
+  stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+  <circle cx="12" cy="12" r="5"/>
+  <line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/>
+  <line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/>
+  <line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/>
+  <line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/>
+</svg>`;
+
+const MOON_ICON = `<svg width="15" height="15" viewBox="0 0 24 24" fill="none"
+  stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+  <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/>
+</svg>`;
+
+function applyTheme(theme) {
+  document.documentElement.setAttribute("data-theme", theme);
+  localStorage.setItem("mco-theme", theme);
+  const btn = document.getElementById("btn-theme");
+  if (theme === "dark") {
+    btn.innerHTML = SUN_ICON;
+    btn.setAttribute("aria-label", "Switch to light mode");
+  } else {
+    btn.innerHTML = MOON_ICON;
+    btn.setAttribute("aria-label", "Switch to dark mode");
+  }
+}
+
+document.getElementById("btn-theme").addEventListener("click", () => {
+  const next = (document.documentElement.getAttribute("data-theme") || "dark") === "dark" ? "light" : "dark";
+  applyTheme(next);
+});
+
+// Set initial icon from the theme already applied by the anti-flash script
+applyTheme(document.documentElement.getAttribute("data-theme") || "dark");
+
+// ── Direction buttons ─────────────────────────────────────────────────────────
+// Buttons are built dynamically once the API responds; use event delegation.
+
+document.getElementById("dir-btns").addEventListener("click", (e) => {
+  const btn = e.target.closest(".dir-btn");
+  if (!btn) return;
+  document.querySelectorAll(".dir-btn").forEach(b => b.setAttribute("aria-pressed", "false"));
+  btn.setAttribute("aria-pressed", "true");
+  currentDir = btn.dataset.dir;
+  updateUrl();
+  refreshMapImages();
+});
+
+dateInput.addEventListener("change", () => { clampDate(); updateUrl(); refreshMapImages(); });
+timeInput.addEventListener("change", () => { updateUrl(); refreshMapImages(); });
+
+// ── Toast ─────────────────────────────────────────────────────────────────────
+
+let _toastTimer;
+function showToast(msg, duration = 2200) {
+  const el = document.getElementById("toast");
+  el.textContent = msg;
+  el.classList.add("visible");
+  clearTimeout(_toastTimer);
+  _toastTimer = setTimeout(() => el.classList.remove("visible"), duration);
+}
+
+// ── Export (PNG with MCO branding) ───────────────────────────────────────────
+// Always exports at EXPORT_W × EXPORT_H CSS pixels at 2× DPR (2800×1400 px).
+// Builds a fresh D3 projection at those fixed dimensions so the output is
+// identical regardless of browser viewport or screen density.
+
+document.getElementById("btn-export").addEventListener("click", async () => {
+  if (!_stationFeatures) { showToast("Map not loaded yet."); return; }
+  showToast("Exporting…");
+
+  const W = EXPORT_W, H = EXPORT_H;
+
+  const canvas = document.createElement("canvas");
+  canvas.width  = W;
+  canvas.height = H;
+  const ctx = canvas.getContext("2d");
+
+  const cs = getComputedStyle(document.documentElement);
+  const bgDeep    = cs.getPropertyValue("--bg-deep").trim();
+  const bgSurface = cs.getPropertyValue("--bg-surface").trim();
+  const borderClr = cs.getPropertyValue("--border").trim();
+  const accentLt  = cs.getPropertyValue("--accent-light").trim();
+  const textMuted = cs.getPropertyValue("--text-muted").trim();
+
+  // Fresh projection fitted to the fixed export canvas — independent of the
+  // browser's live SVG viewBox so output is always the same layout.
+  const exportProj = d3.geoConicConformal()
+    .parallels([44.5, 49.0])
+    .rotate([109.5, 0])
+    .fitExtent([[16, 16], [W - 16, H - 16]], _montanaFeature);
+  const exportPath = d3.geoPath(exportProj);
+
+  ctx.fillStyle = bgDeep;
+  ctx.fillRect(0, 0, W, H);
+
+  // Draw station photos clipped to their Voronoi cells
+  const dtStr   = getSelectedDateTime();
+  const dateStr = dateInput.value;
+
+  await Promise.allSettled(_stationFeatures.map(async (feature) => {
+    const station = feature.properties.station;
+    if (!isValidForDate(station, currentDir, dateStr)) return;
+
+    const [[x0, y0], [x1, y1]] = exportPath.bounds(feature);
+    const bw = x1 - x0, bh = y1 - y0;
+
+    const img = await new Promise((res) => {
+      const i = new Image();
+      i.crossOrigin = "anonymous";
+      i.onload  = () => res(i);
+      i.onerror = () => res(null);
+      i.src = photoUrl(station, dtStr, currentDir);
+    });
+    if (!img || !img.naturalWidth) return;
+
+    ctx.save();
+    ctx.clip(new Path2D(exportPath(feature)));
+    // xMidYMid slice (cover fit)
+    const scale = Math.max(bw / img.naturalWidth, bh / img.naturalHeight);
+    ctx.drawImage(img,
+      x0 + (bw - img.naturalWidth  * scale) / 2,
+      y0 + (bh - img.naturalHeight * scale) / 2,
+      img.naturalWidth * scale, img.naturalHeight * scale);
+    ctx.restore();
+  }));
+
+  // Cell borders
+  ctx.save();
+  ctx.strokeStyle = borderClr;
+  ctx.lineWidth   = 0.6;
+  _stationFeatures.forEach(feature => {
+    if (isValidForDate(feature.properties.station, currentDir, dateStr))
+      ctx.stroke(new Path2D(exportPath(feature)));
+  });
+  ctx.restore();
+
+  // Montana state outline
+  ctx.save();
+  ctx.strokeStyle = accentLt;
+  ctx.lineWidth   = 1.5;
+  ctx.stroke(new Path2D(exportPath(_montanaFeature)));
+  ctx.restore();
+
+  // Branding overlay — lower-left corner, where Idaho would be.
+  // Montana's western border curves eastward (Continental Divide), leaving
+  // a triangular empty area in the lower-left of the projected map.
+  // Sized for EXPORT_W×EXPORT_H (1400×700).
+  const BRAND_W = 280, BRAND_BOX_H = 80;
+  const BX = 24, BY = H - 24 - BRAND_BOX_H;
+  const PAD = 12;
+  const LOGO = 52;
+  const LX = BX + PAD, LY = BY + (BRAND_BOX_H - LOGO) / 2;
+
+  // Semi-transparent backdrop
+  ctx.save();
+  ctx.globalAlpha = 0.88;
+  ctx.fillStyle = bgSurface;
+  ctx.beginPath();
+  if (ctx.roundRect) {
+    ctx.roundRect(BX, BY, BRAND_W, BRAND_BOX_H, 10);
+  } else {
+    const r = 10, bw = BRAND_W, bh = BRAND_BOX_H;
+    ctx.moveTo(BX + r, BY);
+    ctx.arcTo(BX + bw, BY,       BX + bw, BY + bh, r);
+    ctx.arcTo(BX + bw, BY + bh,  BX,      BY + bh, r);
+    ctx.arcTo(BX,      BY + bh,  BX,      BY,      r);
+    ctx.arcTo(BX,      BY,       BX + bw, BY,      r);
+    ctx.closePath();
+  }
+  ctx.fill();
+  ctx.globalAlpha = 0.5;
+  ctx.strokeStyle = borderClr;
+  ctx.lineWidth = 1;
+  ctx.stroke();
+  ctx.restore();
+
+  // MCO logo
+  const logoImg = await new Promise((res) => {
+    const i = new Image();
+    i.crossOrigin = "anonymous";
+    i.onload  = () => res(i);
+    i.onerror = () => res(null);
+    i.src = "https://climate.umt.edu/assets/images/MCO_logo_icon_only.png";
+  });
+  if (logoImg) {
+    ctx.save();
+    ctx.beginPath();
+    if (ctx.roundRect) {
+      ctx.roundRect(LX, LY, LOGO, LOGO, 8);
+    } else {
+      const r = 8;
+      ctx.moveTo(LX + r, LY);
+      ctx.arcTo(LX + LOGO, LY,          LX + LOGO, LY + LOGO, r);
+      ctx.arcTo(LX + LOGO, LY + LOGO,   LX,        LY + LOGO, r);
+      ctx.arcTo(LX,        LY + LOGO,   LX,        LY,        r);
+      ctx.arcTo(LX,        LY,          LX + LOGO, LY,        r);
+      ctx.closePath();
+    }
+    ctx.clip();
+    ctx.drawImage(logoImg, LX, LY, LOGO, LOGO);
+    ctx.restore();
+  }
+
+  // Text — three lines centred vertically to the right of the logo
+  const TX   = LX + LOGO + 10;
+  const TW   = BX + BRAND_W - PAD - TX;   // max text width
+  const midY = BY + BRAND_BOX_H / 2;
+
+  ctx.textBaseline = "middle";
+  ctx.fillStyle = accentLt;
+  ctx.font = "700 13px 'Outfit', system-ui, sans-serif";
+  ctx.fillText("Mesonet Photo Explorer", TX, midY - 14, TW);
+
+  ctx.fillStyle = textMuted;
+  ctx.font = "400 11px 'Outfit', system-ui, sans-serif";
+  ctx.fillText("Montana Climate Office", TX, midY, TW);
+  ctx.fillText(
+    `${formatDisplayTimestamp(getSelectedDateTime())} · ${DIR_LABELS[currentDir] || currentDir}`,
+    TX, midY + 13, TW
+  );
+
+  ctx.textAlign = "right";
+  ctx.font = "italic 10px 'Outfit', system-ui, sans-serif";
+  ctx.fillText("climate.umt.edu", BX + BRAND_W - PAD, BY + BRAND_BOX_H - 7);
+  ctx.textAlign = "left";
+  ctx.textBaseline = "alphabetic";
+
+  // Download — anchor must be appended to the DOM before .click() so that
+  // headless browsers (Playwright, Puppeteer) reliably fire the download event.
+  canvas.toBlob((blob) => {
+    if (!blob) { showToast("Export failed."); return; }
+    const url = URL.createObjectURL(blob);
+    const a = Object.assign(document.createElement("a"), {
+      href: url,
+      download: `mesonet-photos-${getSelectedDateTime().slice(0, 10)}-${currentDir}.png`,
+    });
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+    showToast("Exported!");
+  }, "image/png");
+});
+
+// ── Share ─────────────────────────────────────────────────────────────────────
+
+// The URL is kept in sync by updateUrl(), so location.href is always current.
+document.getElementById("btn-share").addEventListener("click", () => {
+  navigator.clipboard.writeText(location.href)
+    .then(() => showToast("Link copied to clipboard!"))
+    .catch(() => showToast("Copy: " + location.href));
+});
+
+// ── URL sync & social meta ────────────────────────────────────────────────────
+// Called after every state change so location.href is always shareable and
+// meta tags reflect the current selection (for JS-capable crawlers like
+// Slack, Discord, and iMessage).
+
+function updateSocialMeta() {
+  const dirLabel = DIR_LABELS[currentDir] || currentDir;
+
+  // Human-readable date ("March 21, 2026") — parse at noon to avoid DST shifts
+  const dateFmt = new Intl.DateTimeFormat("en-US", {
+    year: "numeric", month: "long", day: "numeric",
+  }).format(new Date(dateInput.value + "T12:00:00"));
+
+  // Human-readable time ("9:00 AM MT")
+  const [h, m] = timeInput.value.split(":").map(Number);
+  const timeFmt = `${h % 12 || 12}:${String(m).padStart(2, "0")} ${h >= 12 ? "PM" : "AM"} MT`;
+
+  const title = `Montana Mesonet Photos · ${dateFmt} · ${timeFmt} · ${dirLabel}`;
+  const desc  = `Montana weather station photos for ${dateFmt} at ${timeFmt}, ` +
+                `${dirLabel} direction. A service of the Montana Climate Office.`;
+
+  document.title = title;
+  // Derive the absolute preview image URL from the current page origin + path,
+  // so it works on any host (GitHub Pages, custom domain, localhost).
+  const previewUrl = new URL("preview.png", location.href).href;
+
+  document.querySelector('meta[property="og:title"]')      ?.setAttribute("content", title);
+  document.querySelector('meta[property="og:description"]')?.setAttribute("content", desc);
+  document.querySelector('meta[property="og:url"]')        ?.setAttribute("content", location.href);
+  document.querySelector('meta[property="og:image"]')      ?.setAttribute("content", previewUrl);
+  document.querySelector('meta[name="twitter:title"]')     ?.setAttribute("content", title);
+  document.querySelector('meta[name="twitter:description"]')?.setAttribute("content", desc);
+  document.querySelector('meta[name="twitter:image"]')     ?.setAttribute("content", previewUrl);
+  document.querySelector('meta[name="description"]')       ?.setAttribute("content", desc);
+}
+
+function updateUrl() {
+  const params = new URLSearchParams({ date: dateInput.value, time: timeInput.value, dir: currentDir });
+  history.replaceState(null, "", `${location.pathname}?${params}`);
+  updateSocialMeta();
+}
+
+// Clamp the date input to [min, max]. Returns true if a correction was made.
+function clampDate() {
+  if (dateInput.min && dateInput.value < dateInput.min) {
+    dateInput.value = dateInput.min;
+    showToast(`Photos begin ${dateInput.min} — date adjusted.`);
+    return true;
+  }
+  if (dateInput.max && dateInput.value > dateInput.max) {
+    dateInput.value = dateInput.max;
+    showToast("Date is in the future — adjusted to today.");
+    return true;
+  }
+  return false;
+}
+
+// ── Timestep navigation ───────────────────────────────────────────────────────
+
+// Advance date/time inputs and URL by one slot without fetching photos.
+// Returns false at a boundary so hold loops know to stop.
+function stepDisplay(delta) {
+  const times = [...timeInput.options].map(o => o.value);
+  const idx   = times.indexOf(timeInput.value);
+  const next  = idx + delta;
+
+  let newDate, newTimeIdx;
+
+  if (next >= 0 && next < times.length) {
+    newDate    = dateInput.value;
+    newTimeIdx = next;
+  } else {
+    const d = new Date(dateInput.value + "T12:00:00");
+    d.setDate(d.getDate() + delta);
+    newDate    = [d.getFullYear(), _pad(d.getMonth() + 1), _pad(d.getDate())].join("-");
+    newTimeIdx = delta > 0 ? 0 : times.length - 1;
+    if (delta < 0 && dateInput.min && newDate < dateInput.min) {
+      showToast("Already at the earliest available date.");
+      return false;
+    }
+  }
+
+  if (delta > 0) {
+    const cap = computeMaxTimestep(0);
+    if (newDate > cap.date || (newDate === cap.date && times[newTimeIdx] > cap.time)) {
+      showToast("Already at the most recent available timestep.");
+      return false;
+    }
+  }
+
+  dateInput.value = newDate;
+  timeInput.value = times[newTimeIdx];
+  updateUrl();
+  return true;
+}
+
+// Hold-to-advance: step display rapidly while held, refresh photos on release.
+let _holdTimer    = null;
+let _holdInterval = null;
+
+function startHold(delta) {
+  if (!stepDisplay(delta)) return;
+  _holdTimer = setTimeout(() => {
+    _holdInterval = setInterval(() => {
+      if (!stepDisplay(delta)) stopHold();
+    }, 120);
+  }, 450);
+}
+
+function stopHold() {
+  if (_holdTimer === null && _holdInterval === null) return;
+  clearTimeout(_holdTimer);
+  clearInterval(_holdInterval);
+  _holdTimer = null;
+  _holdInterval = null;
+  refreshMapImages();
+}
+
+const _btnPrev = document.getElementById("btn-prev");
+const _btnNext = document.getElementById("btn-next");
+
+_btnPrev.addEventListener("mousedown",  (e) => { e.preventDefault(); startHold(-1); });
+_btnNext.addEventListener("mousedown",  (e) => { e.preventDefault(); startHold(+1); });
+_btnPrev.addEventListener("touchstart", (e) => { e.preventDefault(); startHold(-1); }, { passive: false });
+_btnNext.addEventListener("touchstart", (e) => { e.preventDefault(); startHold(+1); }, { passive: false });
+
+// Keyboard: single step + immediate refresh (no hold)
+_btnPrev.addEventListener("keydown", (e) => {
+  if (e.key === "Enter" || e.key === " ") { e.preventDefault(); if (stepDisplay(-1)) refreshMapImages(); }
+});
+_btnNext.addEventListener("keydown", (e) => {
+  if (e.key === "Enter" || e.key === " ") { e.preventDefault(); if (stepDisplay(+1)) refreshMapImages(); }
+});
+
+document.addEventListener("mouseup",     stopHold);
+document.addEventListener("touchend",    stopHold);
+document.addEventListener("touchcancel", stopHold);
+
+// ── Station validity ──────────────────────────────────────────────────────────
+
+// True when the station has the given direction AND dateStr ≥ its photo start
+// date. ISO "YYYY-MM-DD" strings sort lexicographically, so >= works directly.
+function isValidForDate(station, dir, dateStr) {
+  const dirs = stationDirs[station];
+  if (!dirs || !(dir in dirs)) return false;
+  return dateStr >= dirs[dir];
+}
+
+// ── Build map ─────────────────────────────────────────────────────────────────
+// Fetches US topojson, station Voronoi GeoJSON, and the Mesonet photo metadata
+// in parallel, then builds the D3 map with per-station photo cells.
+
+Promise.all([
+  d3.json("https://cdn.jsdelivr.net/npm/us-atlas@3/states-10m.json"),
+  d3.json("https://cdn.jsdelivr.net/npm/us-atlas@3/counties-10m.json"),
+  d3.json("stations.geojson"),
+  d3.json(PHOTOS_META),
+]).then(([us, counties, stations, photosMeta]) => {
+
+  // stationDirs[stationId] = { dir: "YYYY-MM-DD" start date, … }
+  // "Photo Start Date" is per-station; all directions share the same start date.
+  photosMeta.forEach(entry => {
+    const id        = entry["Station ID"];
+    const startDate = entry["Photo Start Date"] || "2000-01-01";
+    stationDirs[id] = {};
+    entry["Photo Directions"].forEach(s => {
+      stationDirs[id][s.split(" ")[0].toUpperCase()] = startDate;
+    });
+  });
+
+  const allDirs = DIR_ORDER.filter(d =>
+    Object.values(stationDirs).some(dirs => d in dirs)
+  );
+  // Set the earliest photo date as the minimum selectable date, clamping any
+  // URL-supplied date that predates the network's first camera.
+  const minDate = photosMeta.map(e => e["Photo Start Date"]).filter(Boolean).sort()[0];
+  if (minDate) {
+    dateInput.min = minDate;
+    clampDate();
+  }
+
+  // Honour URL param if valid, otherwise default to "n"
+  if (!allDirs.includes(currentDir)) currentDir = allDirs.includes("N") ? "N" : allDirs[0];
+  updateUrl();
+
+  const dirBtnsEl = document.getElementById("dir-btns");
+  allDirs.forEach(dir => {
+    const btn = document.createElement("button");
+    btn.className  = "dir-btn";
+    btn.dataset.dir = dir;
+    btn.textContent = dir === "SNOW" ? "Snow" : dir;
+    btn.setAttribute("aria-pressed", dir === currentDir ? "true" : "false");
+    dirBtnsEl.append(btn);
+  });
+
+  const container = document.getElementById("map-container");
+  const W = container.clientWidth;
+  const H = container.clientHeight;
+
+  const svg = d3.select("#map")
+    .attr("viewBox", `0 0 ${W} ${H}`)
+    .attr("preserveAspectRatio", "xMidYMid meet");
+
+  const defs = svg.append("defs");
+
+  const stateFeatures = topojson.feature(us, us.objects.states).features;
+  const montana       = stateFeatures.find(f => +f.id === 30); // 30 = Montana FIPS code
+
+  // Store for the export handler, which builds its own fixed-size projection.
+  _stationFeatures = stations.features;
+  _montanaFeature  = montana;
+
+  const projection = d3.geoConicConformal()
+    .parallels([44.5, 49.0])
+    .rotate([109.5, 0])
+    .fitExtent([[16, 16], [W - 16, H - 16]], montana);
+
+  const path = d3.geoPath(projection);
+
+  svg.append("rect")
+    .attr("class", "map-bg")
+    .attr("width", W)
+    .attr("height", H);
+
+  stations.features.forEach(feature => {
+    const id = feature.properties.station;
+    defs.append("clipPath")
+      .attr("id", `clip-${id}`)
+      .append("path")
+      .attr("d", path(feature));
+  });
+
+  const cellGroup = svg.append("g").attr("class", "cells");
+
+  stations.features.forEach(feature => {
+    const station = feature.properties.station;
+    const name    = feature.properties.name || station;
+    const bounds  = path.bounds(feature);
+    const [[x0, y0], [x1, y1]] = bounds;
+    const bw = x1 - x0;
+    const bh = y1 - y0;
+
+    const g = cellGroup.append("g").datum(feature).attr("class", "cell").attr("data-station", station);
+
+    const hasDirNow = isValidForDate(station, currentDir, dateInput.value);
+    g.append("image")
+      .attr("class", "cell-image")
+      .attr("data-station", station)
+      .attr("x", x0).attr("y", y0)
+      .attr("width", bw).attr("height", bh)
+      .attr("clip-path", `url(#clip-${station})`)
+      .attr("preserveAspectRatio", "xMidYMid slice")
+      .attr("crossorigin", "anonymous")
+      .attr("href",    hasDirNow ? photoUrl(station, getSelectedDateTime(), currentDir) : null)
+      .attr("display", hasDirNow ? null : "none")
+      .on("error", function () { d3.select(this).attr("display", "none"); })
+      .on("load",  function () { d3.select(this).attr("display", null); });
+
+    g.append("path").attr("class", "cell-hover-overlay").attr("d", path(feature))
+      .attr("display", hasDirNow ? null : "none");
+    g.append("path").attr("class", "cell-border").attr("d", path(feature))
+      .attr("display", hasDirNow ? null : "none");
+
+    g.append("path")
+      .attr("class", "cell-hit")
+      .attr("role", "button")
+      .attr("tabindex", hasDirNow ? "0" : "-1")
+      .attr("aria-label", name)
+      .attr("display", hasDirNow ? null : "none")
+      .attr("d", path(feature))
+      .on("keydown", (event) => {
+        if (event.key === "Enter" || event.key === " ") {
+          event.preventDefault();
+          openModal(feature);
+        }
+      })
+      .on("mouseenter", (event) => {
+        g.select(".cell-hover-overlay").style("opacity", 0.3);
+        showTooltip(event, name);
+      })
+      .on("mousemove", moveTooltip)
+      .on("mouseleave", () => {
+        g.select(".cell-hover-overlay").style("opacity", 0);
+        hideTooltip();
+      })
+      .on("focus", () => g.select(".cell-hover-overlay").style("opacity", 0.3))
+      .on("blur",  () => g.select(".cell-hover-overlay").style("opacity", 0))
+      .on("click", () => openModal(feature));
+  });
+
+  if (montana) {
+    svg.append("path")
+      .attr("class", "state-outline")
+      .attr("d", path(montana));
+  }
+
+  const montanaCounties = topojson.feature(counties, counties.objects.counties).features
+    .filter(f => Math.floor(+f.id / 1000) === 30);
+
+  const countyOverlay = svg.append("g")
+    .attr("class", "county-overlay")
+    .attr("display", showCounties ? null : "none");
+
+  montanaCounties.forEach(f => {
+    countyOverlay.append("path").attr("d", path(f));
+  });
+
+  // Auto-export for headless browsers (Playwright, Puppeteer).
+  // ?export=1         — trigger download, keep current/default theme
+  // ?export=light     — force light theme, then trigger download
+  // ?export=dark      — force dark theme, then trigger download
+  const _exportParam = _urlParams.get("export");
+  if (_exportParam === "light" || _exportParam === "dark") {
+    applyTheme(_exportParam);
+  }
+  if (_exportParam) {
+    setTimeout(() => document.getElementById("btn-export").click(), 4000);
+  }
+
+  window.refreshMapImages = function () {
+    const dtStr   = getSelectedDateTime();
+    const dateStr = dateInput.value;
+    cellGroup.selectAll("g.cell").each(function (feature) {
+      const station = feature.properties.station;
+      const valid   = isValidForDate(station, currentDir, dateStr);
+      const g       = d3.select(this);
+      g.select("image.cell-image")
+        .attr("display", valid ? null : "none")
+        .attr("href",    valid ? photoUrl(station, dtStr, currentDir) : null);
+      g.select(".cell-border")
+        .attr("display", valid ? null : "none");
+      g.select(".cell-hover-overlay")
+        .attr("display", valid ? null : "none");
+      g.select(".cell-hit")
+        .attr("display",  valid ? null : "none")
+        .attr("tabindex", valid ? "0" : "-1");
+    });
+  };
+
+}).catch(() => {
+  showToast("Failed to load map data. Please refresh.", 6000);
+});
+
+// ── Tooltip ───────────────────────────────────────────────────────────────────
+
+const tooltipEl = document.getElementById("tooltip");
+
+function showTooltip(event, text) {
+  tooltipEl.textContent = text;
+  tooltipEl.classList.add("visible");
+  moveTooltip(event);
+}
+
+function moveTooltip(event) {
+  tooltipEl.style.left = `${event.clientX + 14}px`;
+  tooltipEl.style.top  = `${event.clientY - 32}px`;
+}
+
+function hideTooltip() {
+  tooltipEl.classList.remove("visible");
+}
+
+// ── Modal ─────────────────────────────────────────────────────────────────────
+
+const modal = document.getElementById("modal");
+let showCounties = localStorage.getItem("mco-counties") === "true";
+
+const btnCounties = document.getElementById("btn-counties");
+btnCounties.setAttribute("aria-pressed", showCounties ? "true" : "false");
+btnCounties.addEventListener("click", () => {
+  showCounties = !showCounties;
+  localStorage.setItem("mco-counties", showCounties);
+  btnCounties.setAttribute("aria-pressed", showCounties ? "true" : "false");
+  const overlay = document.querySelector(".county-overlay");
+  if (overlay) overlay.setAttribute("display", showCounties ? "" : "none");
+});
+
+let lastFocusedEl = null;
+
+function openModal(feature) {
+  const station = feature.properties.station;
+  const name    = feature.properties.name || station;
+  const dtStr   = getSelectedDateTime();
+
+  document.getElementById("modal-station-name").textContent = name;
+  document.getElementById("modal-timestamp").textContent    = formatDisplayTimestamp(dtStr);
+
+  document.getElementById("modal-dash-link").innerHTML =
+    `<a href="https://mesonet.climate.umt.edu/dash/${station}"
+        target="_blank" rel="noopener">Open ${name} dashboard &rarr;</a>`;
+
+  const grid = document.getElementById("photo-grid");
+  grid.innerHTML = "";
+
+  // Only show directions whose start date is on or before the selected date
+  const dateStr   = dateInput.value;
+  const validDirs = DIR_ORDER.filter(dir => isValidForDate(station, dir, dateStr));
+
+  if (validDirs.length === 0) {
+    const msg = document.createElement("p");
+    msg.style.cssText = "color:var(--text-muted);font-size:0.85rem;padding:0.5rem 0";
+    msg.textContent = "No photos available for this station on the selected date.";
+    grid.append(msg);
+  }
+
+  validDirs.forEach(dir => {
+    const card = document.createElement("div");
+    card.className = "photo-card";
+
+    const img = document.createElement("img");
+    img.alt     = `${name} — ${DIR_LABELS[dir] || dir}`;
+    img.src     = photoUrl(station, dtStr, dir);
+    img.loading = "lazy";
+    img.addEventListener("error", () => card.remove());
+    img.addEventListener("click", () => openLightbox(
+      rawPhotoUrl(station, dtStr, dir),
+      `${name} · ${formatDisplayTimestamp(dtStr)} · ${DIR_LABELS[dir] || dir}`
+    ));
+
+    const label = document.createElement("div");
+    label.className   = "photo-dir-label";
+    label.textContent = DIR_LABELS[dir] || dir;
+
+    card.append(img, label);
+    grid.append(card);
+  });
+
+  lastFocusedEl = document.activeElement;
+  modal.showModal();
+  document.getElementById("modal-close").focus();
+}
+
+function closeModal() {
+  modal.close();
+  if (lastFocusedEl) {
+    lastFocusedEl.focus();
+    lastFocusedEl.blur();
+  }
+}
+
+document.getElementById("modal-close").addEventListener("click", closeModal);
+modal.addEventListener("click", (e) => { if (e.target === modal) closeModal(); });
+modal.addEventListener("cancel", (e) => { e.preventDefault(); closeModal(); });
+
+const lightbox        = document.getElementById("lightbox");
+const lightboxImg     = document.getElementById("lightbox-img");
+const lightboxCaption = document.getElementById("lightbox-caption");
+
+function openLightbox(url, caption) {
+  lightboxImg.src              = url;
+  lightboxImg.alt              = caption;
+  lightboxCaption.textContent  = caption;
+  lightbox.showModal();
+}
+
+function closeLightbox() {
+  lightbox.close();
+  lightboxImg.src = "";
+}
+
+document.getElementById("lightbox-close").addEventListener("click", closeLightbox);
+lightbox.addEventListener("click", (e) => { if (e.target === lightbox) closeLightbox(); });
+lightbox.addEventListener("cancel", (e) => { e.preventDefault(); closeLightbox(); });
+</script>
+</body>
+</html>
