@@ -319,11 +319,34 @@
       position: relative;
     }
 
+    #btn-zoom-reset {
+      position: absolute;
+      bottom: 1rem;
+      right: 1rem;
+      background: var(--bg-surface);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      color: var(--text-muted);
+      width: 32px;
+      height: 32px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      cursor: pointer;
+      box-shadow: var(--shadow);
+      transition: color var(--transition), border-color var(--transition);
+      stroke: currentColor;
+    }
+    #btn-zoom-reset:hover { color: var(--text-primary); border-color: var(--accent-light); }
+
     svg#map {
+      cursor: grab;
       width: 100%;
       height: 100%;
       display: block;
     }
+    svg#map:active { cursor: grabbing; }
+    svg#map .cell-hit { cursor: pointer; }
 
     /* SVG element classes that use theme tokens */
     .map-bg        { fill: var(--bg-deep); transition: fill var(--transition); }
@@ -631,6 +654,15 @@
   <svg id="map"
        aria-label="Map of Montana Mesonet weather stations. Tap or click a cell to view photos.">
   </svg>
+  <button id="btn-zoom-reset" aria-label="Reset map zoom" title="Reset zoom" style="display:none">
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none"
+         stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+      <path d="M3.5 3.5 L9 3.5 M3.5 3.5 L3.5 9"/>
+      <path d="M20.5 3.5 L15 3.5 M20.5 3.5 L20.5 9"/>
+      <path d="M3.5 20.5 L9 20.5 M3.5 20.5 L3.5 15"/>
+      <path d="M20.5 20.5 L15 20.5 M20.5 20.5 L20.5 15"/>
+    </svg>
+  </button>
 </div>
 
 <div id="tooltip" role="tooltip"></div>
@@ -1255,7 +1287,8 @@ Promise.all([
       .attr("d", path(feature));
   });
 
-  const cellGroup = svg.append("g").attr("class", "cells");
+  const zoomLayer = svg.append("g").attr("id", "zoom-layer");
+  const cellGroup = zoomLayer.append("g").attr("class", "cells");
 
   stations.features.forEach(feature => {
     const station = feature.properties.station;
@@ -1314,7 +1347,7 @@ Promise.all([
   });
 
   if (montana) {
-    svg.append("path")
+    zoomLayer.append("path")
       .attr("class", "state-outline")
       .attr("d", path(montana));
   }
@@ -1322,13 +1355,33 @@ Promise.all([
   const montanaCounties = topojson.feature(counties, counties.objects.counties).features
     .filter(f => Math.floor(+f.id / 1000) === 30);
 
-  const countyOverlay = svg.append("g")
+  const countyOverlay = zoomLayer.append("g")
     .attr("class", "county-overlay")
     .attr("display", showCounties ? null : "none");
 
   montanaCounties.forEach(f => {
     countyOverlay.append("path").attr("d", path(f));
   });
+
+  // ── Zoom / pan ──────────────────────────────────────────────────────────────
+  const btnZoomReset = document.getElementById("btn-zoom-reset");
+
+  const zoom = d3.zoom()
+    .scaleExtent([1, 8])
+    .translateExtent([[0, 0], [W, H]])
+    .filter(event => event.type !== "dblclick" && !event.ctrlKey)
+    .on("zoom", (event) => {
+      zoomLayer.attr("transform", event.transform);
+      btnZoomReset.style.display = event.transform.k === 1 ? "none" : "flex";
+    });
+
+  svg.call(zoom);
+
+  window.resetMapZoom = () => {
+    svg.transition().duration(400).call(zoom.transform, d3.zoomIdentity);
+  };
+
+  btnZoomReset.addEventListener("click", () => window.resetMapZoom());
 
   // Auto-export for headless browsers (Playwright, Puppeteer).
   // ?export=1         — trigger download, keep current/default theme
