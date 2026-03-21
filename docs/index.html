@@ -312,21 +312,30 @@
       justify-content: center;
     }
 
-    /* Direction: always use the select; never show the button group */
-    .dir-btns  { display: none; }
-    .dir-select { display: block; }
+    /* Direction select hidden by default; buttons shown */
+    .dir-select { display: none; }
 
-    /* Compact layout — hide brand/divider/labels to stay on one row */
-    @media (max-width: 1080px) {
-      .brand, .nav-divider { display: none; }
+    /* Step 1 — collapse text labels (control + button) */
+    @media (max-width: 1400px) {
       .control-label { display: none; }
       .btn-label { display: none; }
-      #navbar  { padding-left: 0.6rem; padding-right: 0.6rem; gap: 0.4rem; }
-      .controls { gap: 0.35rem; }
-      .nav-actions { gap: 0.25rem; }
     }
 
-    /* Prevent any wrapping above portrait-phone width */
+    /* Step 2 — direction buttons → select, tighten gaps */
+    @media (max-width: 1060px) {
+      .dir-btns   { display: none; }
+      .dir-select { display: block; }
+      #navbar     { padding-left: 0.6rem; padding-right: 0.6rem; gap: 0.4rem; }
+      .controls   { gap: 0.3rem; }
+      .nav-actions { gap: 0.2rem; }
+    }
+
+    /* Step 3 — hide brand and divider */
+    @media (max-width: 750px) {
+      .brand, .nav-divider { display: none; }
+    }
+
+    /* Step 4 — allow wrapping (portrait phones) */
     @media (min-width: 641px) {
       #navbar   { flex-wrap: nowrap; }
       .controls { flex-wrap: nowrap; }
