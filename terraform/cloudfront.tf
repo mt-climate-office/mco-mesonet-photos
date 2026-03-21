@@ -57,7 +57,7 @@ resource "aws_cloudfront_response_headers_policy" "cors" {
       items = ["Content-Length", "Content-Range", "Accept-Ranges", "ETag"]
     }
     access_control_max_age_sec = 3600
-    origin_override            = false
+    origin_override            = true
   }
 }
 
