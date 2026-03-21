@@ -312,16 +312,24 @@
       justify-content: center;
     }
 
-    /* Direction select — hidden on wide screens, shown on narrow */
-    .dir-select { display: none; }
+    /* Direction: always use the select; never show the button group */
+    .dir-btns  { display: none; }
+    .dir-select { display: block; }
 
-    @media (max-width: 600px) {
+    /* Compact layout — hide brand/divider/labels to stay on one row */
+    @media (max-width: 1080px) {
       .brand, .nav-divider { display: none; }
       .control-label { display: none; }
       .btn-label { display: none; }
-      .dir-btns { display: none; }
-      .dir-select { display: block; }
-      .nav-btn.icon-only { min-width: 30px; padding: 0.3rem; }
+      #navbar  { padding-left: 0.6rem; padding-right: 0.6rem; gap: 0.4rem; }
+      .controls { gap: 0.35rem; }
+      .nav-actions { gap: 0.25rem; }
+    }
+
+    /* Prevent any wrapping above portrait-phone width */
+    @media (min-width: 641px) {
+      #navbar   { flex-wrap: nowrap; }
+      .controls { flex-wrap: nowrap; }
     }
 
     /* ── Map ───────────────────────────────────────────────────────────────── */
