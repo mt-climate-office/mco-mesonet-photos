@@ -323,7 +323,7 @@
 
     /* Step 2 — direction buttons → select, tighten gaps */
     @media (max-width: 1060px) {
-      .dir-btns   { display: none; }
+      #dir-group  { display: none; }
       .dir-select { display: block; }
       #navbar     { padding-left: 0.6rem; padding-right: 0.6rem; gap: 0.4rem; }
       .controls   { gap: 0.3rem; }
@@ -335,7 +335,7 @@
       .brand, .nav-divider { display: none; }
     }
 
-    /* Step 4 — allow wrapping (portrait phones) */
+    /* Step 4 — prevent wrapping above portrait-phone width */
     @media (min-width: 641px) {
       #navbar   { flex-wrap: nowrap; }
       .controls { flex-wrap: nowrap; }
@@ -647,12 +647,13 @@
       </button>
     </div>
 
-    <div class="control-group">
+    <div class="control-group" id="dir-group">
       <span class="control-label" aria-hidden="true">Direction</span>
       <div class="dir-btns" id="dir-btns" role="group" aria-label="Camera direction"></div>
-      <select class="time-select dir-select" id="dir-select" aria-label="Camera direction"></select>
     </div>
   </div>
+
+  <select class="time-select dir-select" id="dir-select" aria-label="Camera direction"></select>
 
   <div class="nav-actions">
     <button class="nav-btn" id="btn-counties" aria-pressed="false">
