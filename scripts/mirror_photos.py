@@ -246,7 +246,6 @@ def main() -> None:
                 f"           file:    {diag.stdout.strip()}\n"
                 f"           size:    {size} bytes  head: {head}"
             )
-            raw.unlink(missing_ok=True)
             convert_failed.append((station, filename, iso_dt, direction))
         else:
             convert_ok.append((station, filename, iso_dt, direction))
