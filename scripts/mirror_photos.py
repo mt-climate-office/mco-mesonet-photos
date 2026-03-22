@@ -118,8 +118,11 @@ def load_skip_list(s3) -> set[str]:
     try:
         buf = BytesIO()
         s3.download_fileobj(S3_BUCKET, SKIP_LIST_KEY, buf)
-        data = json.loads(buf.getvalue().decode())
+        body = buf.getvalue()
+        data = json.loads(body.decode())
         log.info(f"Loaded skip list: {len(data):,} entries")
+        SKIP_LIST_FILE.parent.mkdir(parents=True, exist_ok=True)
+        SKIP_LIST_FILE.write_bytes(body)
         return set(data)
     except botocore.exceptions.ClientError as exc:
         if exc.response["Error"]["Code"] in ("404", "NoSuchKey"):
