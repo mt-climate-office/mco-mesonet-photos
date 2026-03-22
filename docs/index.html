@@ -829,7 +829,10 @@ const { year: _y, month: _mo, day: _d } = mtParts(new Date());
 // Constrain the date picker: min set later from API data; max is today in MT.
 dateInput.max   = `${_y}-${_mo}-${_d}`;
 dateInput.value = _urlParams.get("date") || _maxTs.date;
-timeInput.value = _urlParams.get("time") || _maxTs.time;
+const _timeParam = _urlParams.get("time");
+timeInput.value = _timeParam
+  ? (_timeParam.includes(":") ? _timeParam : `${String(_timeParam).padStart(2, "0")}:00:00`)
+  : _maxTs.time;
 
 let currentDir = _urlParams.get("dir") || "N";
 
@@ -1154,7 +1157,7 @@ function updateSocialMeta() {
 }
 
 function updateUrl() {
-  const params = new URLSearchParams({ date: dateInput.value, time: timeInput.value, dir: currentDir });
+  const params = new URLSearchParams({ date: dateInput.value, time: parseInt(timeInput.value), dir: currentDir });
   history.replaceState(null, "", `${location.pathname}?${params}`);
   updateSocialMeta();
 }
