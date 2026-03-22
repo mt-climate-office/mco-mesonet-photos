@@ -1,7 +1,10 @@
 name: Mirror Mesonet Photos
 
 on:
-  workflow_dispatch:   # manual trigger only — re-add schedule after backfill is complete
+  schedule:
+    - cron: "30 15 * * *"   # 9:30 AM MDT (UTC-6)
+    - cron: "30 21 * * *"   # 3:30 PM MDT (UTC-6)
+  workflow_dispatch:
 
 permissions:
   id-token: write   # required for OIDC

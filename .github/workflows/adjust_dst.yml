@@ -1,0 +1,60 @@
+name: Adjust Cron for DST
+
+on:
+  schedule:
+    - cron: "0 10 8-14 3 0"    # Second Sunday of March (spring forward → MDT)
+    - cron: "0 10 1-7 11 0"    # First Sunday of November (fall back → MST)
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  adjust-cron:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Update mirror_photos cron for DST
+        run: |
+          python3 - <<'EOF'
+          from datetime import datetime
+
+          month = datetime.utcnow().month
+          path = ".github/workflows/mirror_photos.yml"
+
+          with open(path) as f:
+              content = f.read()
+
+          if month == 3:
+              # Spring forward → MDT (UTC-6)
+              content = content.replace(
+                  '"30 16 * * *"   # 9:30 AM MST (UTC-7)',
+                  '"30 15 * * *"   # 9:30 AM MDT (UTC-6)'
+              ).replace(
+                  '"30 22 * * *"   # 3:30 PM MST (UTC-7)',
+                  '"30 21 * * *"   # 3:30 PM MDT (UTC-6)'
+              )
+              print("Updated cron to MDT (UTC-6)")
+          else:
+              # Fall back → MST (UTC-7)
+              content = content.replace(
+                  '"30 15 * * *"   # 9:30 AM MDT (UTC-6)',
+                  '"30 16 * * *"   # 9:30 AM MST (UTC-7)'
+              ).replace(
+                  '"30 21 * * *"   # 3:30 PM MDT (UTC-6)',
+                  '"30 22 * * *"   # 3:30 PM MST (UTC-7)'
+              )
+              print("Updated cron to MST (UTC-7)")
+
+          with open(path, "w") as f:
+              f.write(content)
+          EOF
+
+      - name: Commit and push
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add .github/workflows/mirror_photos.yml
+          git diff --staged --quiet || git commit -m "chore: adjust mirror_photos cron for DST [skip ci]"
+          git push
