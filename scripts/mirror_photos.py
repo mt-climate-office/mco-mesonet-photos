@@ -195,7 +195,7 @@ def main() -> None:
 
     # Enumerate source
     log.info("Enumerating stations…")
-    stations = crawl(http, f"{SOURCE_BASE}/")
+    stations = [s for s in crawl(http, f"{SOURCE_BASE}/") if "." not in s]
     log.info(f"Found {len(stations)} stations")
 
     # Build task list — one task per new station/direction/hour slot
