@@ -14,6 +14,7 @@ AWS auth: --profile mco (local) or AWS_ACCESS_KEY_ID env var (CI/CD)
 """
 
 import argparse
+import json
 import logging
 import os
 import re
@@ -37,8 +38,9 @@ S3_BUCKET     = "mco-mesonet"
 S3_PREFIX_RAW = "photos/raw"
 S3_PREFIX_WEB = "photos/web"
 MANIFEST_KEY  = "photos/manifest.parquet"
-LOCAL_RAW     = Path("cache/photos_raw")
-LOCAL_WEB     = Path("cache/photos_web")
+LOCAL_RAW        = Path("cache/photos_raw")
+LOCAL_WEB        = Path("cache/photos_web")
+CRAWL_CACHE_FILE = Path("cache/crawl_cache.json")
 WEBP_QUALITY  = 75
 WEBP_METHOD   = 6
 WEBP_WIDTH    = 320
@@ -130,6 +132,8 @@ def parse_args() -> argparse.Namespace:
                    help="AWS profile (default: %(default)s; ignored if AWS_ACCESS_KEY_ID is set)")
     p.add_argument("--dry-run", action="store_true",
                    help="List new photos without downloading or uploading")
+    p.add_argument("--fresh-crawl", action="store_true",
+                   help=f"Re-crawl source server even if {CRAWL_CACHE_FILE} exists")
     return p.parse_args()
 
 def main() -> None:
@@ -153,13 +157,23 @@ def main() -> None:
 
     # ── Step 2: Crawl source and compare ─────────────────────────────────────
     log.info("=== Step 2: Crawl source and compare ===")
-    stations = [s for s in crawl(http, f"{SOURCE_BASE}/") if s and "." not in s]
-    log.info(f"Found {len(stations)} stations")
+    if not args.fresh_crawl and CRAWL_CACHE_FILE.exists():
+        log.info(f"  Loading crawl cache from {CRAWL_CACHE_FILE}")
+        station_files: dict[str, list[str]] = json.loads(CRAWL_CACHE_FILE.read_text())
+    else:
+        stations = [s for s in crawl(http, f"{SOURCE_BASE}/") if s and "." not in s]
+        log.info(f"  Found {len(stations)} stations — crawling file lists…")
+        station_files = {}
+        for station in stations:
+            station_files[station] = crawl(http, f"{SOURCE_BASE}/{station}/")
+        CRAWL_CACHE_FILE.parent.mkdir(parents=True, exist_ok=True)
+        CRAWL_CACHE_FILE.write_text(json.dumps(station_files))
+        log.info(f"  Crawl cache saved to {CRAWL_CACHE_FILE}")
 
     tasks: list[tuple] = []   # (station, filename, iso_dt, direction)
     seen:  set[str]    = set()
-    for station in stations:
-        for filename in crawl(http, f"{SOURCE_BASE}/{station}/"):
+    for station, filenames in station_files.items():
+        for filename in filenames:
             parsed = parse_filename(filename)
             if not parsed:
                 continue
