@@ -137,12 +137,16 @@ def process(session: requests.Session, s3, station: str, filename: str,
 
     # Download raw JPEG
     if not raw.exists():
-        r = session.get(f"{SOURCE_BASE}/{station}/{filename}", timeout=60)
+        url = f"{SOURCE_BASE}/{station}/{filename}"
+        log.info(f"Downloading {url} → {raw}")
+        r = session.get(url, timeout=60)
         r.raise_for_status()
         if not r.content.startswith(b"\xff\xd8"):
+            log.warning(f"Download failed: {url} returned {len(r.content)} bytes (not a valid JPEG)")
             raise ValueError(f"Not a valid JPEG ({len(r.content)} bytes)")
         raw.parent.mkdir(parents=True, exist_ok=True)
         raw.write_bytes(r.content)
+        log.info(f"Downloaded {url} → {raw} ({len(r.content):,} bytes)")
 
     # Convert to WebP
     if not web.exists():
