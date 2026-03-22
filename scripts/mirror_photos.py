@@ -219,6 +219,14 @@ def main() -> None:
         raw = LOCAL_RAW / station / f"{iso_dt}_{direction}.jpg"
         url = f"{SOURCE_BASE}/{station}/{filename}"
         if raw.exists():
+            data = raw.read_bytes()
+            if not data.endswith(b"\xff\xd9"):
+                key = s3_key(station, iso_dt, direction, "webp")
+                log.warning(f"  SKIP     {station}/{filename}: cached raw is truncated — adding to skip list")
+                new_skips.add(key)
+                raw.unlink(missing_ok=True)
+                download_failed.append((station, filename, iso_dt, direction))
+                continue
             log.info(f"  cached   {raw}")
             download_ok.append((station, filename, iso_dt, direction))
             continue
