@@ -29,21 +29,57 @@ jobs:
           if month == 3:
               # Spring forward → MDT (UTC-6)
               content = content.replace(
+                  '"0 16 * * *"    # 9:00 AM MST (UTC-7)',
+                  '"0 15 * * *"    # 9:00 AM MDT (UTC-6)'
+              ).replace(
+                  '"15 16 * * *"   # 9:15 AM MST (UTC-7)',
+                  '"15 15 * * *"   # 9:15 AM MDT (UTC-6)'
+              ).replace(
                   '"30 16 * * *"   # 9:30 AM MST (UTC-7)',
                   '"30 15 * * *"   # 9:30 AM MDT (UTC-6)'
               ).replace(
+                  '"45 16 * * *"   # 9:45 AM MST (UTC-7)',
+                  '"45 15 * * *"   # 9:45 AM MDT (UTC-6)'
+              ).replace(
+                  '"0 22 * * *"    # 3:00 PM MST (UTC-7)',
+                  '"0 21 * * *"    # 3:00 PM MDT (UTC-6)'
+              ).replace(
+                  '"15 22 * * *"   # 3:15 PM MST (UTC-7)',
+                  '"15 21 * * *"   # 3:15 PM MDT (UTC-6)'
+              ).replace(
                   '"30 22 * * *"   # 3:30 PM MST (UTC-7)',
                   '"30 21 * * *"   # 3:30 PM MDT (UTC-6)'
+              ).replace(
+                  '"45 22 * * *"   # 3:45 PM MST (UTC-7)',
+                  '"45 21 * * *"   # 3:45 PM MDT (UTC-6)'
               )
               print("Updated cron to MDT (UTC-6)")
           else:
               # Fall back → MST (UTC-7)
               content = content.replace(
+                  '"0 15 * * *"    # 9:00 AM MDT (UTC-6)',
+                  '"0 16 * * *"    # 9:00 AM MST (UTC-7)'
+              ).replace(
+                  '"15 15 * * *"   # 9:15 AM MDT (UTC-6)',
+                  '"15 16 * * *"   # 9:15 AM MST (UTC-7)'
+              ).replace(
                   '"30 15 * * *"   # 9:30 AM MDT (UTC-6)',
                   '"30 16 * * *"   # 9:30 AM MST (UTC-7)'
               ).replace(
+                  '"45 15 * * *"   # 9:45 AM MDT (UTC-6)',
+                  '"45 16 * * *"   # 9:45 AM MST (UTC-7)'
+              ).replace(
+                  '"0 21 * * *"    # 3:00 PM MDT (UTC-6)',
+                  '"0 22 * * *"    # 3:00 PM MST (UTC-7)'
+              ).replace(
+                  '"15 21 * * *"   # 3:15 PM MDT (UTC-6)',
+                  '"15 22 * * *"   # 3:15 PM MST (UTC-7)'
+              ).replace(
                   '"30 21 * * *"   # 3:30 PM MDT (UTC-6)',
                   '"30 22 * * *"   # 3:30 PM MST (UTC-7)'
+              ).replace(
+                  '"45 21 * * *"   # 3:45 PM MDT (UTC-6)',
+                  '"45 22 * * *"   # 3:45 PM MST (UTC-7)'
               )
               print("Updated cron to MST (UTC-7)")
 

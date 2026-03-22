@@ -14,6 +14,7 @@ AWS auth: --profile mco (local) or AWS_ACCESS_KEY_ID env var (CI/CD)
 """
 
 import argparse
+from datetime import datetime, timezone, timedelta
 import json
 import logging
 import os
@@ -97,6 +98,11 @@ def parse_filename(filename: str) -> tuple[str, str] | None:
 def s3_key(station: str, iso_dt: str, direction: str, ext: str) -> str:
     prefix = S3_PREFIX_RAW if ext == "jpg" else S3_PREFIX_WEB
     return f"{prefix}/{station}/{iso_dt}_{direction}.{ext}"
+
+def is_stale(iso_dt: str, max_age_hours: float = 24.0) -> bool:
+    """Return True if the photo timestamp is older than max_age_hours (UTC)."""
+    dt = datetime.strptime(iso_dt, "%Y-%m-%dT%H%M%S").replace(tzinfo=timezone.utc)
+    return (datetime.now(timezone.utc) - dt) >= timedelta(hours=max_age_hours)
 
 # ── Manifest ──────────────────────────────────────────────────────────────────
 
@@ -228,9 +234,12 @@ def main() -> None:
             data = raw.read_bytes()
             if not data.endswith(b"\xff\xd9"):
                 key = s3_key(station, iso_dt, direction, "webp")
-                log.warning(f"  SKIP     {station}/{filename}: cached raw is truncated — adding to skip list")
-                new_skips.add(key)
                 raw.unlink(missing_ok=True)
+                if is_stale(iso_dt):
+                    log.warning(f"  SKIP     {station}/{filename}: cached raw is truncated and ≥1 day old — adding to skip list")
+                    new_skips.add(key)
+                else:
+                    log.warning(f"  RETRY    {station}/{filename}: cached raw is truncated but recent — will retry next run")
                 download_failed.append((station, filename, iso_dt, direction))
                 continue
             log.info(f"  cached   {raw}")
@@ -249,10 +258,12 @@ def main() -> None:
             log.info(f"  saved    {raw} ({len(r.content):,} bytes)")
             download_ok.append((station, filename, iso_dt, direction))
         except ValueError as exc:
-            # Deterministic bad file — skip permanently
             key = s3_key(station, iso_dt, direction, "webp")
-            log.warning(f"  SKIP     {station}/{filename}: {exc}")
-            new_skips.add(key)
+            if is_stale(iso_dt):
+                log.warning(f"  SKIP     {station}/{filename}: {exc} — ≥1 day old, adding to skip list")
+                new_skips.add(key)
+            else:
+                log.warning(f"  RETRY    {station}/{filename}: {exc} — recent, will retry next run")
             download_failed.append((station, filename, iso_dt, direction))
         except Exception as exc:
             # Transient error — allow retry next run
