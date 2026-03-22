@@ -34,7 +34,7 @@ jobs:
           aws-region: us-west-2
 
       - name: Mirror photos
-        run: python scripts/mirror_photos.py --workers 16
+        run: python scripts/mirror_photos.py
 
       - name: Invalidate CloudFront manifest cache
         run: |
