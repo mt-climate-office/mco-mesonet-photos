@@ -42,6 +42,7 @@ SKIP_LIST_KEY = "photos/skip_list.json"
 LOCAL_RAW        = Path("cache/photos_raw")
 LOCAL_WEB        = Path("cache/photos_web")
 CRAWL_CACHE_FILE = Path("cache/crawl_cache.json")
+SKIP_LIST_FILE   = Path("cache/skip_list.json")
 WEBP_QUALITY  = 75
 WEBP_METHOD   = 6
 WEBP_WIDTH    = 320
@@ -126,10 +127,12 @@ def load_skip_list(s3) -> set[str]:
         raise
 
 def save_skip_list(s3, skip_set: set[str]) -> None:
-    body = json.dumps(sorted(skip_set)).encode()
+    body = json.dumps(sorted(skip_set), indent=2).encode()
     s3.put_object(Bucket=S3_BUCKET, Key=SKIP_LIST_KEY,
                   Body=body, ContentType="application/json")
-    log.info(f"Skip list saved ({len(skip_set):,} entries) → s3://{S3_BUCKET}/{SKIP_LIST_KEY}")
+    SKIP_LIST_FILE.parent.mkdir(parents=True, exist_ok=True)
+    SKIP_LIST_FILE.write_bytes(body)
+    log.info(f"Skip list saved ({len(skip_set):,} entries) → s3://{S3_BUCKET}/{SKIP_LIST_KEY} and {SKIP_LIST_FILE}")
 
 def save_manifest(s3, df: pd.DataFrame) -> None:
     buf = BytesIO()
