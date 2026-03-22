@@ -25,14 +25,14 @@ A service of the [Montana Climate Office](https://climate.umt.edu).
 ## How It Works
 
 The source server at `https://data.climate.umt.edu/mesonet/photos` hosts station photos named
-`YYYYMMDDHHMMSS_DIR.jpg`. `mirror_photos.py`:
+`YYYYMMDDHHMMSS_DIR.jpg`. `mirror_photos.py` runs a linear six-step pipeline:
 
-1. Crawls the source directory listing for each station
-2. Compares against the manifest (`s3://mco-mesonet/photos/manifest.parquet`) to find new photos
-3. Downloads raw JPEGs → `cache/photos_raw/{station}/{YYYY-MM-DDTHH0000}_{DIR}.jpg`
-4. Converts to WebP via `cwebp` → `cache/photos_web/{station}/{YYYY-MM-DDTHH0000}_{DIR}.webp`
-5. Uploads both to S3 with immutable cache headers
-6. Appends new rows to the manifest and re-uploads it
+1. **Load manifest** — downloads `s3://mco-mesonet/photos/manifest.parquet` to find already-processed photos, and `photos/skip_list.json` for permanently-bad files
+2. **Crawl & compare** — crawls the source directory listing for each station and builds a task list of new photos (excludes manifest + skip list entries). Results are cached locally in `cache/crawl_cache.json` to speed up repeated dev runs; use `--fresh-crawl` to force a re-crawl
+3. **Download** — fetches raw JPEGs, validating both the SOI (`ff d8`) and EOI (`ff d9`) markers. Truncated or non-JPEG responses are added to the skip list and never retried. Transient network errors are retried on the next run
+4. **Convert** — converts each JPEG to WebP via `cwebp` (`-q 75 -m 6 -resize 320 0`)
+5. **Upload** — uploads both the raw JPEG and WebP to S3 with immutable cache headers
+6. **Update manifest & skip list** — appends new rows to the manifest parquet and, if any new bad files were found, updates `photos/skip_list.json` in S3
 
 The web explorer loads the manifest at startup (via CloudFront), renders station photos as
 Voronoi cells on a D3 map, and allows browsing by date, time, and direction. Clicking a cell
@@ -80,7 +80,8 @@ s3://mco-mesonet/
     ├── web/
     │   └── {station}/
     │       └── {YYYY-MM-DDTHH0000}_{DIR}.webp  # 320px-wide WebP (q75, method 6)
-    └── manifest.parquet                         # Snappy-compressed index of all photos
+    ├── manifest.parquet                         # Snappy-compressed index of all photos
+    └── skip_list.json                           # S3 keys for permanently-bad source files
 ```
 
 The manifest schema:
@@ -97,33 +98,65 @@ The manifest schema:
 
 ## Running Locally
 
-**Prerequisites:**
+### Docker (recommended)
 
-- Python 3.12+
-- `cwebp` (for photo conversion): `brew install webp`
-- AWS CLI v2 configured with an `mco` profile: `aws sso login --profile mco`
-- Python dependencies: `pip install -r scripts/requirements.txt`
+The `Dockerfile` mirrors the GitHub Actions `ubuntu-24.04` runner exactly (Python 3.12, `cwebp` from apt). Use this to reproduce CI failures locally.
 
-**Mirror new photos:**
+**Build:**
 
 ```bash
-python scripts/mirror_photos.py --workers 16
+docker build -t mco-mirror .
 ```
 
-**Dry run (count new photos without downloading):**
+**Dry run** (crawls source, compares against manifest — no downloads or uploads):
 
 ```bash
-python scripts/mirror_photos.py --dry-run
+docker run --rm \
+  -v ~/.aws:/root/.aws:ro \
+  -v $(pwd)/cache:/repo/cache \
+  mco-mirror --dry-run
 ```
 
-**Backfill from a local cache directory:**
+**Full run:**
 
 ```bash
-# Expects cache/photos_raw/ and cache/photos_web/ to be populated
-python scripts/backfill_from_local.py
+docker run --rm \
+  -v ~/.aws:/root/.aws:ro \
+  -v $(pwd)/cache:/repo/cache \
+  mco-mirror --profile mco
+```
 
-# Rebuild manifest only (skip file sync)
-python scripts/backfill_from_local.py --manifest-only
+**Force a fresh crawl** (re-crawl source server instead of using `cache/crawl_cache.json`):
+
+```bash
+docker run --rm \
+  -v ~/.aws:/root/.aws:ro \
+  -v $(pwd)/cache:/repo/cache \
+  mco-mirror --profile mco --fresh-crawl
+```
+
+**Interactive shell** (for debugging):
+
+```bash
+docker run --rm -it \
+  -v ~/.aws:/root/.aws:ro \
+  -v $(pwd)/cache:/repo/cache \
+  --entrypoint bash \
+  mco-mirror
+```
+
+The `cache/` volume mount persists downloaded files and the crawl cache across container runs.
+Local copies of `cache/crawl_cache.json` and `cache/skip_list.json` are written automatically.
+
+### Without Docker
+
+**Prerequisites:** Python 3.12+, `cwebp` (`brew install webp`), AWS profile `mco` configured.
+
+```bash
+pip install -r scripts/requirements.txt
+python scripts/mirror_photos.py               # full run
+python scripts/mirror_photos.py --dry-run     # count new photos only
+python scripts/mirror_photos.py --fresh-crawl # force re-crawl of source
 ```
 
 **Generate social preview image (requires Playwright):**
@@ -137,10 +170,10 @@ python scripts/generate_preview.py
 
 ## CI/CD (GitHub Actions)
 
-The `mirror_photos` workflow runs twice daily (9:30 AM and 3:30 PM Mountain Time) and on
-manual dispatch. It:
+The `mirror_photos` workflow runs on manual dispatch (schedule to be re-enabled after backfill
+is complete). It:
 
-1. Runs `mirror_photos.py --workers 16` to pull new photos into S3
+1. Runs `mirror_photos.py` to pull new photos into S3
 2. Invalidates the CloudFront cache for `manifest.parquet`
 3. Regenerates `docs/preview.png` via Playwright and commits it back to the repo
 
