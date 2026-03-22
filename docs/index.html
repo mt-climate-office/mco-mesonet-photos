@@ -312,6 +312,27 @@
       justify-content: center;
     }
 
+    .date-stepper {
+      display: flex;
+      align-items: center;
+      gap: 4px;
+    }
+
+    .date-step-btns {
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+    }
+
+    .nav-btn.date-step {
+      padding: 0 4px;
+      min-height: 0;
+      height: 15px;
+      min-width: 20px;
+      border-radius: var(--radius-sm);
+      justify-content: center;
+    }
+
     /* Direction select hidden by default; buttons shown */
     .dir-select { display: none; }
 
@@ -623,7 +644,23 @@
   <div class="controls">
     <div class="control-group">
       <label class="control-label" for="date-input">Date</label>
-      <input type="date" id="date-input">
+      <div class="date-stepper">
+        <input type="date" id="date-input">
+        <div class="date-step-btns">
+          <button class="nav-btn date-step" id="btn-date-next" aria-label="Next day">
+            <svg width="10" height="10" viewBox="0 0 24 24" fill="none"
+                 stroke-width="3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <polyline points="18 15 12 9 6 15"/>
+            </svg>
+          </button>
+          <button class="nav-btn date-step" id="btn-date-prev" aria-label="Previous day">
+            <svg width="10" height="10" viewBox="0 0 24 24" fill="none"
+                 stroke-width="3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <polyline points="6 9 12 15 18 9"/>
+            </svg>
+          </button>
+        </div>
+      </div>
     </div>
     <div class="control-group">
       <label class="control-label" for="time-input">Time</label>
@@ -631,20 +668,6 @@
         <option value="09:00:00">9:00 AM</option>
         <option value="15:00:00" selected>3:00 PM</option>
       </select>
-    </div>
-    <div class="control-group" role="group" aria-label="Step through time">
-      <button class="nav-btn icon-only" id="btn-prev" aria-label="Previous timestep">
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none"
-             stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-          <polyline points="15 18 9 12 15 6"/>
-        </svg>
-      </button>
-      <button class="nav-btn icon-only" id="btn-next" aria-label="Next timestep">
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none"
-             stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-          <polyline points="9 18 15 12 9 6"/>
-        </svg>
-      </button>
     </div>
 
     <div class="control-group" id="dir-group">
@@ -1152,54 +1175,36 @@ function clampDate() {
   return false;
 }
 
-// ── Timestep navigation ───────────────────────────────────────────────────────
+// ── Date navigation ────────────────────────────────────────────────────────────
 
-// Advance date/time inputs and URL by one slot without fetching photos.
-// Returns false at a boundary so hold loops know to stop.
-function stepDisplay(delta) {
-  const times = [...timeInput.options].map(o => o.value);
-  const idx   = times.indexOf(timeInput.value);
-  const next  = idx + delta;
-
-  let newDate, newTimeIdx;
-
-  if (next >= 0 && next < times.length) {
-    newDate    = dateInput.value;
-    newTimeIdx = next;
-  } else {
-    const d = new Date(dateInput.value + "T12:00:00");
-    d.setDate(d.getDate() + delta);
-    newDate    = [d.getFullYear(), _pad(d.getMonth() + 1), _pad(d.getDate())].join("-");
-    newTimeIdx = delta > 0 ? 0 : times.length - 1;
-    if (delta < 0 && dateInput.min && newDate < dateInput.min) {
-      showToast("Already at the earliest available date.");
-      return false;
-    }
+// Step the date input by delta days. Returns false at a boundary.
+function stepDate(delta) {
+  const d = new Date(dateInput.value + "T12:00:00");
+  d.setDate(d.getDate() + delta);
+  const newDate = [d.getFullYear(), _pad(d.getMonth() + 1), _pad(d.getDate())].join("-");
+  if (delta < 0 && dateInput.min && newDate < dateInput.min) {
+    showToast("Already at the earliest available date.");
+    return false;
   }
-
-  if (delta > 0) {
-    const cap = computeMaxTimestep(0);
-    if (newDate > cap.date || (newDate === cap.date && times[newTimeIdx] > cap.time)) {
-      showToast("Already at the most recent available timestep.");
-      return false;
-    }
+  if (delta > 0 && newDate > computeMaxTimestep(0).date) {
+    showToast("Already at the most recent available date.");
+    return false;
   }
-
   dateInput.value = newDate;
-  timeInput.value = times[newTimeIdx];
+  clampDate();
   updateUrl();
   return true;
 }
 
-// Hold-to-advance: step display rapidly while held, refresh photos on release.
+// Hold-to-advance: step rapidly while held, refresh photos on release.
 let _holdTimer    = null;
 let _holdInterval = null;
 
 function startHold(delta) {
-  if (!stepDisplay(delta)) return;
+  if (!stepDate(delta)) return;
   _holdTimer = setTimeout(() => {
     _holdInterval = setInterval(() => {
-      if (!stepDisplay(delta)) stopHold();
+      if (!stepDate(delta)) stopHold();
     }, 120);
   }, 450);
 }
@@ -1213,20 +1218,20 @@ function stopHold() {
   refreshMapImages();
 }
 
-const _btnPrev = document.getElementById("btn-prev");
-const _btnNext = document.getElementById("btn-next");
+const _btnDatePrev = document.getElementById("btn-date-prev");
+const _btnDateNext = document.getElementById("btn-date-next");
 
-_btnPrev.addEventListener("mousedown",  (e) => { e.preventDefault(); startHold(-1); });
-_btnNext.addEventListener("mousedown",  (e) => { e.preventDefault(); startHold(+1); });
-_btnPrev.addEventListener("touchstart", (e) => { e.preventDefault(); startHold(-1); }, { passive: false });
-_btnNext.addEventListener("touchstart", (e) => { e.preventDefault(); startHold(+1); }, { passive: false });
+_btnDatePrev.addEventListener("mousedown",  (e) => { e.preventDefault(); startHold(-1); });
+_btnDateNext.addEventListener("mousedown",  (e) => { e.preventDefault(); startHold(+1); });
+_btnDatePrev.addEventListener("touchstart", (e) => { e.preventDefault(); startHold(-1); }, { passive: false });
+_btnDateNext.addEventListener("touchstart", (e) => { e.preventDefault(); startHold(+1); }, { passive: false });
 
 // Keyboard: single step + immediate refresh (no hold)
-_btnPrev.addEventListener("keydown", (e) => {
-  if (e.key === "Enter" || e.key === " ") { e.preventDefault(); if (stepDisplay(-1)) refreshMapImages(); }
+_btnDatePrev.addEventListener("keydown", (e) => {
+  if (e.key === "Enter" || e.key === " ") { e.preventDefault(); if (stepDate(-1)) refreshMapImages(); }
 });
-_btnNext.addEventListener("keydown", (e) => {
-  if (e.key === "Enter" || e.key === " ") { e.preventDefault(); if (stepDisplay(+1)) refreshMapImages(); }
+_btnDateNext.addEventListener("keydown", (e) => {
+  if (e.key === "Enter" || e.key === " ") { e.preventDefault(); if (stepDate(+1)) refreshMapImages(); }
 });
 
 document.addEventListener("mouseup",     stopHold);
