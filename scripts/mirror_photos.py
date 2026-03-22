@@ -17,6 +17,7 @@ import argparse
 import logging
 import os
 import re
+import subprocess
 import sys
 from io import BytesIO
 from pathlib import Path
@@ -28,7 +29,6 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 import requests
 from bs4 import BeautifulSoup
-from PIL import Image
 
 # ── Config ────────────────────────────────────────────────────────────────────
 
@@ -40,6 +40,7 @@ MANIFEST_KEY  = "photos/manifest.parquet"
 LOCAL_RAW     = Path("cache/photos_raw")
 LOCAL_WEB     = Path("cache/photos_web")
 WEBP_QUALITY  = 75
+WEBP_METHOD   = 6
 WEBP_WIDTH    = 320
 
 MANIFEST_SCHEMA = pa.schema([
@@ -214,21 +215,22 @@ def main() -> None:
             log.info(f"  cached   {web}")
             convert_ok.append((station, filename, iso_dt, direction))
             continue
-        log.info(f"  convert  {raw} → {web}")
+        log.info(f"  cwebp    {raw} → {web}")
         web.parent.mkdir(parents=True, exist_ok=True)
-        try:
-            img = Image.open(raw)
-            if img.width > WEBP_WIDTH:
-                img = img.resize(
-                    (WEBP_WIDTH, round(img.height * WEBP_WIDTH / img.width)),
-                    Image.LANCZOS,
-                )
-            img.save(web, format="WEBP", quality=WEBP_QUALITY)
-            convert_ok.append((station, filename, iso_dt, direction))
-        except Exception as exc:
+        result = subprocess.run(
+            ["cwebp", "-q", str(WEBP_QUALITY), "-m", str(WEBP_METHOD),
+             "-resize", str(WEBP_WIDTH), "0", str(raw), "-o", str(web)],
+            capture_output=True,
+        )
+        if result.returncode != 0:
             raw.unlink(missing_ok=True)
-            log.warning(f"  FAILED   {station}/{filename}: convert error: {exc}")
+            log.warning(
+                f"  FAILED   {station}/{filename}: cwebp exit {result.returncode}: "
+                + result.stderr.decode(errors="replace").strip()
+            )
             convert_failed.append((station, filename, iso_dt, direction))
+        else:
+            convert_ok.append((station, filename, iso_dt, direction))
 
     log.info(f"Conversions: {len(convert_ok):,} ok, {len(convert_failed):,} failed")
 

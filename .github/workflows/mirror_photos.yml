@@ -21,6 +21,9 @@ jobs:
           cache: pip
           cache-dependency-path: scripts/requirements.txt
 
+      - name: Install cwebp
+        run: sudo apt-get install -y webp
+
       - name: Install dependencies
         run: pip install -r scripts/requirements.txt
 
