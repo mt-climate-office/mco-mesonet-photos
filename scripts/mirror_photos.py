@@ -237,11 +237,16 @@ def main() -> None:
             capture_output=True,
         )
         if result.returncode != 0:
-            raw.unlink(missing_ok=True)
+            diag = subprocess.run(["file", str(raw)], capture_output=True, text=True)
+            size = raw.stat().st_size if raw.exists() else "missing"
+            head = raw.read_bytes()[:16].hex(" ") if raw.exists() else ""
             log.warning(
-                f"  FAILED   {station}/{filename}: cwebp exit {result.returncode}: "
-                + result.stderr.decode(errors="replace").strip()
+                f"  FAILED   {station}/{filename}: cwebp exit {result.returncode}\n"
+                f"           stderr:  {result.stderr.decode(errors='replace').strip()}\n"
+                f"           file:    {diag.stdout.strip()}\n"
+                f"           size:    {size} bytes  head: {head}"
             )
+            raw.unlink(missing_ok=True)
             convert_failed.append((station, filename, iso_dt, direction))
         else:
             convert_ok.append((station, filename, iso_dt, direction))
