@@ -29,6 +29,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         python3.12-venv \
         python3-pip \
         webp \
+        file \
+        curl \
     && rm -rf /var/lib/apt/lists/*
 
 # Create a venv (avoids the externally-managed-environment restriction)
