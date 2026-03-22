@@ -207,6 +207,8 @@ def main() -> None:
             r.raise_for_status()
             if not r.content.startswith(b"\xff\xd8"):
                 raise ValueError(f"not a JPEG ({len(r.content)} bytes)")
+            if not r.content.endswith(b"\xff\xd9"):
+                raise ValueError(f"truncated JPEG — no EOI marker ({len(r.content)} bytes)")
             raw.parent.mkdir(parents=True, exist_ok=True)
             raw.write_bytes(r.content)
             log.info(f"  saved    {raw} ({len(r.content):,} bytes)")
