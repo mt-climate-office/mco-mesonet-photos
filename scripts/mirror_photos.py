@@ -139,17 +139,26 @@ def process(session: requests.Session, s3, station: str, filename: str,
     if not raw.exists():
         r = session.get(f"{SOURCE_BASE}/{station}/{filename}", timeout=60)
         r.raise_for_status()
+        if not r.content.startswith(b"\xff\xd8"):
+            raise ValueError(f"Not a valid JPEG ({len(r.content)} bytes)")
         raw.parent.mkdir(parents=True, exist_ok=True)
         raw.write_bytes(r.content)
 
     # Convert to WebP
     if not web.exists():
         web.parent.mkdir(parents=True, exist_ok=True)
-        subprocess.run(
+        result = subprocess.run(
             ["cwebp", "-q", str(WEBP_QUALITY), "-m", str(WEBP_METHOD),
              "-resize", str(WEBP_WIDTH), "0", str(raw), "-o", str(web)],
-            check=True, capture_output=True,
+            capture_output=True,
         )
+        if result.returncode != 0:
+            # Cached raw file is corrupt — delete it so next run re-downloads
+            raw.unlink(missing_ok=True)
+            raise RuntimeError(
+                f"cwebp failed (exit {result.returncode}): "
+                + result.stderr.decode(errors="replace").strip()
+            )
 
     # Upload both
     s3.upload_file(str(raw), S3_BUCKET, key_raw,
@@ -195,7 +204,7 @@ def main() -> None:
 
     # Enumerate source
     log.info("Enumerating stations…")
-    stations = [s for s in crawl(http, f"{SOURCE_BASE}/") if "." not in s]
+    stations = [s for s in crawl(http, f"{SOURCE_BASE}/") if s and "." not in s]
     log.info(f"Found {len(stations)} stations")
 
     # Build task list — one task per new station/direction/hour slot
