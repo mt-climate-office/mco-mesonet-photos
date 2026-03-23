@@ -61,33 +61,12 @@ resource "aws_cloudfront_response_headers_policy" "cors" {
   }
 }
 
-# ── TLS certificate ───────────────────────────────────────────────────────────
-# Must live in us-east-1 for CloudFront. DNS validation records are output so
-# they can be sent to UMT IT for manual validation.
-# Apply workflow (two steps because CloudFront rejects an unvalidated cert):
-#   1. terraform apply -target=aws_acm_certificate.custom_domain
-#   2. Share the acm_dns_validation_records output with UMT IT; wait for ISSUED
-#   3. terraform apply   (updates the distribution)
-
-resource "aws_acm_certificate" "custom_domain" {
-  provider          = aws.us_east_1
-  domain_name       = "data.mesonet.climate.umt.edu"
-  validation_method = "DNS"
-
-  lifecycle {
-    create_before_destroy = true
-  }
-
-  tags = local.common_tags
-}
-
 # ── Distribution ──────────────────────────────────────────────────────────────
 
 resource "aws_cloudfront_distribution" "photos" {
   enabled         = true
   is_ipv6_enabled = true
   comment         = "Mesonet photo explorer — ${var.s3_bucket_name}"
-  aliases         = ["data.mesonet.climate.umt.edu"]
   tags            = local.common_tags
 
   origin {
@@ -124,8 +103,6 @@ resource "aws_cloudfront_distribution" "photos" {
   }
 
   viewer_certificate {
-    acm_certificate_arn      = aws_acm_certificate.custom_domain.arn
-    ssl_support_method       = "sni-only"
-    minimum_protocol_version = "TLSv1.2_2021"
+    cloudfront_default_certificate = true
   }
 }
