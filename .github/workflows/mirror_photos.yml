@@ -6,10 +6,14 @@ on:
     - cron: "15 15 * * *"   # 9:15 AM MDT (UTC-6)
     - cron: "30 15 * * *"   # 9:30 AM MDT (UTC-6)
     - cron: "45 15 * * *"   # 9:45 AM MDT (UTC-6)
+    - cron: "0 16 * * *"    # 10:00 AM MDT (UTC-6)
+    - cron: "0 17 * * *"    # 11:00 AM MDT (UTC-6)
     - cron: "0 21 * * *"    # 3:00 PM MDT (UTC-6)
     - cron: "15 21 * * *"   # 3:15 PM MDT (UTC-6)
     - cron: "30 21 * * *"   # 3:30 PM MDT (UTC-6)
     - cron: "45 21 * * *"   # 3:45 PM MDT (UTC-6)
+    - cron: "0 22 * * *"    # 4:00 PM MDT (UTC-6)
+    - cron: "0 23 * * *"    # 5:00 PM MDT (UTC-6)
   workflow_dispatch:
 
 permissions:
