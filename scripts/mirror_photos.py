@@ -20,7 +20,6 @@ import logging
 import os
 import re
 import subprocess
-import sys
 from io import BytesIO
 from pathlib import Path
 
@@ -344,8 +343,6 @@ def main() -> None:
 
     transient_failures = len(download_failed) - len(new_skips) + len(convert_failed) + len(upload_failed)
     log.info(f"Done. {len(new_rows):,} uploaded, {len(new_skips):,} added to skip list, {transient_failures:,} transient failures.")
-    if transient_failures:
-        sys.exit(1)
 
 if __name__ == "__main__":
     main()
