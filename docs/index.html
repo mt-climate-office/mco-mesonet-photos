@@ -626,15 +626,25 @@
 
     .modal-dash-link {
       margin-top: 1rem;
-      font-size: 0.8rem;
+      text-align: center;
     }
 
     .modal-dash-link a {
-      color: var(--accent-light);
+      display: inline-block;
+      padding: 0.5rem 1.5rem;
+      background: var(--accent);
+      color: #fff;
+      border-radius: 6px;
+      font-size: 0.9rem;
+      font-weight: 600;
       text-decoration: none;
+      transition: background var(--transition);
     }
 
-    .modal-dash-link a:hover { text-decoration: underline; }
+    .modal-dash-link a:hover {
+      background: var(--accent-light);
+      text-decoration: none;
+    }
 
     /* ── Info modal ─────────────────────────────────────────────────────────── */
     #info-modal {
