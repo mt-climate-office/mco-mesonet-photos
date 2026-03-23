@@ -969,9 +969,9 @@ function mtParts(date, includeTime = false) {
 }
 
 // Returns the latest available photo timestep in Mountain Time, optionally
-// lagged by lagMinutes (default 60) to ensure photos have been processed.
+// lagged by lagMinutes (default 30) to ensure photos have been processed.
 // Result: { date: "YYYY-MM-DD", time: "HH:MM:SS" }
-function computeMaxTimestep(lagMinutes = 60) {
+function computeMaxTimestep(lagMinutes = 30) {
   const now    = new Date();
   const p      = mtParts(now, true);
   const thresh = (parseInt(p.hour) % 24) * 60 + parseInt(p.minute) - lagMinutes;
@@ -1081,7 +1081,7 @@ document.getElementById("dir-btns").addEventListener("click", (e) => {
 });
 
 dateInput.addEventListener("change", () => { clampDate(); updateUrl(); refreshMapImages(); });
-timeInput.addEventListener("change", () => { updateUrl(); refreshMapImages(); });
+timeInput.addEventListener("change", () => { clampDate(); updateUrl(); refreshMapImages(); });
 
 // ── Toast ─────────────────────────────────────────────────────────────────────
 
@@ -1328,7 +1328,8 @@ function updateUrl() {
   updateSocialMeta();
 }
 
-// Clamp the date input to [min, max]. Returns true if a correction was made.
+// Clamp the date input to [min, max], and the time to the latest available
+// slot when on the latest available date. Returns true if a correction was made.
 function clampDate() {
   if (dateInput.min && dateInput.value < dateInput.min) {
     dateInput.value = dateInput.min;
@@ -1338,6 +1339,12 @@ function clampDate() {
   if (dateInput.max && dateInput.value > dateInput.max) {
     dateInput.value = dateInput.max;
     showToast("Date is in the future — adjusted to today.");
+    return true;
+  }
+  const maxTs = computeMaxTimestep();
+  if (dateInput.value === maxTs.date && timeInput.value > maxTs.time) {
+    timeInput.value = maxTs.time;
+    showToast("Time not yet available — adjusted to latest.");
     return true;
   }
   return false;
