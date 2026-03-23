@@ -1,6 +1,7 @@
 library(tidyverse)
 library(sf)
 library(magrittr)
+library(rairtable)
 
 # Custom Albers parameterization from Alex Stum, 2021-10-20
 umrb_grid_proj <-
@@ -35,12 +36,13 @@ mt_grid <-
                 dplyr::filter(Status != "Less than 40%") %>%
                 sf::st_centroid(),
               join = sf::st_contains) %>%
-  dplyr::filter(!is.na(cell)) %>%
+  # dplyr::filter(!is.na(cell)) %>%
   dplyr::select(`Grid Cell ID` = cell)
 
 mesonet_stations <- 
   readr::read_csv("https://mesonet.climate.umt.edu/api/stations?type=csv") %>%
   dplyr::filter(sub_network == "HydroMet") %>%
+  sf::st_as_sf(coords = c("longitude", "latitude"), crs = 4326) %>%
   dplyr::select(station, name, date_installed, nwsli_id)
 
 umrb_status <-
@@ -67,10 +69,29 @@ mesonet_stations_sf <-
   dplyr::left_join(umrb_status, 
                    by = "nwsli_id") %>%
   dplyr::arrange(nwsli_id) %>%
-  dplyr::filter(!is.na(`Grid Cell ID`)) %>%
-  dplyr::left_join(mt_grid) %>%
+  dplyr::mutate(
+    `Grid Cell ID` = 
+      ifelse(station == "acerapl2", "H-11", `Grid Cell ID`)) %>%
+  # dplyr::filter(!is.na(`Grid Cell ID`)) %>%
+  dplyr::left_join(mt_grid %>%
+                     sf::st_centroid() %>%
+                     sf::st_transform(4326) %>%
+                     tibble::as_tibble() %>%
+                     dplyr::filter(!is.na(`Grid Cell ID`)) %>%
+                     dplyr::select(`Grid Cell ID`,
+                                   geometry_cell = geometry),
+                   by = "Grid Cell ID") %>%
+  tibble::as_tibble() %>%
+  # dplyr::rowwise() %>%
+  dplyr::mutate(geometry = ifelse(!is.na(`Grid Cell ID`), geometry_cell, geometry) %>%
+                  sf::st_as_sfc(crs = 4326)) %>%
+  dplyr::select(-geometry_cell) %>%
   sf::st_as_sf() %>%
-  sf::st_transform(umrb_grid_proj) %>%
+  sf::st_join(x = mt_grid %>%
+                sf::st_transform(4326),
+              y = .,
+              join = sf::st_contains) %>%
+  dplyr::filter(!is.na(station)) %>%
   dplyr::select(station, name) %>%
   sf::st_transform("EPSG:4326") %T>%
   sf::write_sf("docs/stations.geojson",
