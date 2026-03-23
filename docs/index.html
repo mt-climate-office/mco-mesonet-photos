@@ -312,6 +312,19 @@
       justify-content: center;
     }
 
+    #btn-info {
+      border-radius: 50%;
+      border-color: var(--accent);
+      color: var(--accent-light);
+      font-size: 1rem;
+      font-weight: 600;
+    }
+
+    #btn-info:hover {
+      background: var(--accent);
+      color: #fff;
+    }
+
     .date-stepper {
       display: flex;
       align-items: center;
@@ -646,7 +659,7 @@
       background: var(--bg-surface);
       border: 1px solid var(--border);
       border-radius: 10px;
-      width: min(680px, calc(100vw - 4rem));
+      width: min(560px, calc(100vw - 4rem));
       max-height: calc(100dvh - 4rem);
       overflow-y: auto;
       padding: 1.5rem;
@@ -717,6 +730,15 @@
     .info-section ul li { margin-bottom: 0.2rem; }
     .info-section ul li:last-child { margin-bottom: 0; }
     .info-section ul li strong { color: var(--text-primary); font-weight: 600; }
+
+    .info-icon {
+      display: inline-flex;
+      align-items: center;
+      vertical-align: middle;
+      margin: 0 3px 1px 0;
+      opacity: 0.8;
+    }
+    .info-icon svg { stroke: currentColor; }
   </style>
 </head>
 <body>
@@ -734,15 +756,6 @@
     <span class="brand-title">Mesonet Photo Explorer</span>
     <span class="brand-subtitle">A service of the Montana Climate Office</span>
   </div>
-
-  <button class="nav-btn icon-only" id="btn-info" aria-label="About this explorer">
-    <svg width="14" height="14" viewBox="0 0 24 24" fill="none"
-         stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-      <circle cx="12" cy="12" r="10"/>
-      <path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/>
-      <line x1="12" y1="17" x2="12.01" y2="17"/>
-    </svg>
-  </button>
 
   <div class="controls">
     <div class="control-group">
@@ -811,6 +824,7 @@
     <button class="nav-btn icon-only" id="btn-theme" aria-label="Switch to light mode">
       <!-- icon injected by JS -->
     </button>
+    <button class="nav-btn icon-only" id="btn-info" aria-label="About this explorer">?</button>
   </div>
 </header>
 
@@ -843,32 +857,39 @@
     </div>
 
     <div class="info-section">
-      <h3>About the Montana Mesonet</h3>
-      <p>The <a href="https://climate.umt.edu/mesonet/" target="_blank" rel="noopener">Montana Mesonet</a> is a statewide environmental monitoring network operated by the <a href="https://climate.umt.edu" target="_blank" rel="noopener">Montana Climate Office</a> (MCO) at the University of Montana. More than 215 active stations measure air temperature, relative humidity, wind speed and direction, precipitation, and soil conditions at multiple depths — providing real-time data to support drought assessment, precision agriculture, and rangeland and watershed management across Montana.</p>
-    </div>
-
-    <div class="info-section">
-      <h3>The UMRB HydroMet Network</h3>
-      <p>In 2020, the U.S. Army Corps of Engineers contracted the MCO to install 205 HydroMet stations across central and eastern Montana as part of the <a href="https://climate.umt.edu/mesonet/umrb/" target="_blank" rel="noopener">Upper Missouri River Basin (UMRB)</a> monitoring initiative. Stations are positioned roughly one per 500 square miles to provide spatially consistent observations for drought and flood forecasting across the basin.</p>
-      <p>Each HydroMet station is equipped with a pan-tilt-zoom camera that captures photos toward all cardinal directions (North, South, East, West), toward the sky (North Sky and South Sky), and downward at the snowpack.</p>
+      <h3>About</h3>
+      <p>The <a href="https://climate.umt.edu/mesonet/" target="_blank" rel="noopener">Montana Mesonet</a> is a network of 215+ stations operated by the <a href="https://climate.umt.edu" target="_blank" rel="noopener">Montana Climate Office</a> at the University of Montana, measuring temperature, humidity, wind, precipitation, and soil conditions to support drought monitoring and land management statewide.</p>
+      <p>In 2020, the U.S. Army Corps of Engineers funded 205 HydroMet stations across central and eastern Montana — one per ~500 sq mi — to improve drought and flood forecasting across the <a href="https://climate.umt.edu/mesonet/umrb/" target="_blank" rel="noopener">Upper Missouri River Basin</a>. Each station includes a pan-tilt-zoom camera capturing photos in all cardinal directions, toward the sky, and at the snowpack.</p>
     </div>
 
     <div class="info-section">
       <h3>Using the Photo Explorer</h3>
       <ul>
-        <li><strong>Date &amp; Time</strong> — Select any date and hour to browse archived photos. Use the ▲▼ arrows to step one day at a time, or hold them to scroll rapidly.</li>
-        <li><strong>Direction</strong> — Choose a camera direction (N, S, E, W, Snow, NS, SS) to display that view simultaneously across all stations.</li>
-        <li><strong>Click a station</strong> — Click any cell on the map to open a gallery of all available camera directions for that station. Click a photo to enlarge it.</li>
-        <li><strong>Zoom &amp; pan</strong> — Scroll or pinch to zoom; click and drag to pan. Use the reset button (bottom-right) to return to the full-state view.</li>
-        <li><strong>Counties</strong> — Toggle Montana county boundaries on or off.</li>
-        <li><strong>Export</strong> — Download a PNG snapshot of the current map view.</li>
-        <li><strong>Share</strong> — Copy a link to the current date, time, and direction to your clipboard.</li>
+        <li><strong>Date &amp; Time</strong> — Browse any date and hour; use ▲▼ to step day by day.</li>
+        <li><strong>Direction</strong> — Pick a camera angle to show that view across all stations at once.</li>
+        <li><strong>Click a station</strong> — Open a photo gallery for that station; click any photo to enlarge.</li>
+        <li>
+          <span class="info-icon"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3.5 3.5 L9 3.5 M3.5 3.5 L3.5 9"/><path d="M20.5 3.5 L15 3.5 M20.5 3.5 L20.5 9"/><path d="M3.5 20.5 L9 20.5 M3.5 20.5 L3.5 15"/><path d="M20.5 20.5 L15 20.5 M20.5 20.5 L20.5 15"/></svg></span>
+          <strong>Zoom &amp; pan</strong> — Scroll or pinch to zoom; drag to pan. This button resets the view.
+        </li>
+        <li>
+          <span class="info-icon"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/></svg></span>
+          <strong>Counties</strong> — Toggle county boundaries.
+        </li>
+        <li>
+          <span class="info-icon"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg></span>
+          <strong>Export</strong> — Download a PNG of the current map.
+        </li>
+        <li>
+          <span class="info-icon"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/></svg></span>
+          <strong>Share</strong> — Copy a shareable link to your clipboard.
+        </li>
       </ul>
     </div>
 
     <div class="info-section">
       <h3>Why is the grid skewed?</h3>
-      <p>The UMRB HydroMet stations are placed on a regular survey grid defined in the Army Corps of Engineers' project coordinate system, which is oriented to the hydrology and topography of the Upper Missouri River Basin rather than to geographic north. When displayed on this map — which uses a Lambert Conformal Conic projection centered on Montana — that grid appears rotated relative to north, giving the station cells their characteristic diagonal pattern.</p>
+      <p>The stations sit on a survey grid aligned with the Montana–North Dakota border, using a coordinate system designed to minimize distortion across the UMRB. On this map's Lambert Conformal Conic projection, that alignment appears as a rotation.</p>
     </div>
   </div>
 </dialog>
