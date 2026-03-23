@@ -16,6 +16,9 @@ on:
     - cron: "0 23 * * *"    # 5:00 PM MDT (UTC-6)
   workflow_dispatch:
 
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
 permissions:
   id-token: write   # required for OIDC
   contents: read
