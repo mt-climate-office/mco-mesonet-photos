@@ -4,6 +4,8 @@ An interactive web map for browsing Montana Mesonet station photos by date, time
 direction. Photos are mirrored from the Mesonet source server to S3, converted to WebP, and
 served via CloudFront. The explorer is a static single-page app hosted on GitHub Pages.
 
+View it live at [https://mesonet.climate.umt.edu/photos/](https://mesonet.climate.umt.edu/photos/)
+
 A service of the [Montana Climate Office](https://climate.umt.edu).
 
 ---
