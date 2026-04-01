@@ -196,7 +196,11 @@ def main() -> None:
         log.info(f"  Found {len(stations)} stations — crawling file lists…")
         station_files = {}
         for station in stations:
-            station_files[station] = crawl(http, f"{SOURCE_BASE}/{station}/")
+            try:
+                station_files[station] = crawl(http, f"{SOURCE_BASE}/{station}/")
+            except requests.HTTPError as exc:
+                log.warning("  Skipping %s: %s", station, exc)
+                continue
         CRAWL_CACHE_FILE.parent.mkdir(parents=True, exist_ok=True)
         CRAWL_CACHE_FILE.write_text(json.dumps(station_files))
         log.info(f"  Crawl cache saved to {CRAWL_CACHE_FILE}")
