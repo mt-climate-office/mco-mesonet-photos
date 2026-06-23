@@ -931,6 +931,10 @@
 const CLOUDFRONT_BASE = "https://mesonet.climate.umt.edu/data";
 // Mesonet API: station list with photo directions and start dates
 const PHOTOS_META     = "https://mesonet.climate.umt.edu/api/v2/photos?type=json";
+// Mesonet API: full station list — network membership, display names, coordinates
+const STATIONS_META   = "https://mesonet.climate.umt.edu/api/stations?type=json";
+// Mesonet API: per-station status + grid-cell (ace_grid) assignment
+const STATUS_META     = "https://mesonet.climate.umt.edu/api/stations/status?type=json";
 
 // Canonical direction order and display labels
 const DIR_ORDER  = ["N", "S", "E", "W", "SNOW", "NS", "SS"];
@@ -1138,7 +1142,7 @@ document.getElementById("btn-export").addEventListener("click", async () => {
   ctx.fillStyle = bgDeep;
   ctx.fillRect(0, 0, W, H);
 
-  // Draw station photos clipped to their Voronoi cells
+  // Draw station photos clipped to their grid cells
   const dtStr   = getSelectedDateTime();
   const dateStr = dateInput.value;
 
@@ -1434,15 +1438,26 @@ function isValidForDate(station, dir, dateStr) {
 }
 
 // ── Build map ─────────────────────────────────────────────────────────────────
-// Fetches US topojson, station Voronoi GeoJSON, and the Mesonet photo metadata
-// in parallel, then builds the D3 map with per-station photo cells.
+// Fetches US topojson, the static grid geometry, and the live Mesonet station /
+// status / photo APIs in parallel, then builds the D3 map with one photo cell
+// per active HydroMet station that has photos.
+
+// Normalise a grid-cell ID to a canonical form (uppercase letters, unpadded
+// number) so the API's `ace_grid` ("C-07") matches the static grid geometry
+// ("C-7") regardless of zero-padding.
+function normCell(c) {
+  const m = /^([A-Za-z]+)-0*(\d+)$/.exec((c || "").trim());
+  return m ? `${m[1].toUpperCase()}-${+m[2]}` : (c || "").trim();
+}
 
 Promise.all([
   d3.json("https://cdn.jsdelivr.net/npm/us-atlas@3/states-10m.json"),
   d3.json("https://cdn.jsdelivr.net/npm/us-atlas@3/counties-10m.json"),
-  d3.json("stations.geojson"),
+  d3.json("grid.geojson"),
+  d3.json(STATIONS_META),
+  d3.json(STATUS_META),
   d3.json(PHOTOS_META),
-]).then(([us, counties, stations, photosMeta]) => {
+]).then(([us, counties, grid, allStations, statusRows, photosMeta]) => {
 
   // stationDirs[stationId] = { dir: "YYYY-MM-DD" start date, … }
   // "Photo Start Date" is per-station; all directions share the same start date.
@@ -1454,6 +1469,31 @@ Promise.all([
       stationDirs[id][s.split(" ")[0].toUpperCase()] = startDate;
     });
   });
+
+  // ── Assemble the live station set ───────────────────────────────────────────
+  // Geometry is static (grid.geojson — one polygon per planning cell); every
+  // dynamic property is joined from the Mesonet API at run time. A station
+  // renders when it is a HydroMet station (network membership — excludes AgriMet
+  // and test rigs), is "active" in the status API, and has photos available.
+  // It is placed at its assigned grid cell (ace_grid), or — lacking one — the
+  // cell containing its coordinates. New stations appear automatically with no
+  // rebuild of grid.geojson.
+  const cellByCode      = new Map(grid.features.map(f => [normCell(f.properties.cell), f]));
+  const statusByStation = new Map(statusRows.map(r => [r.station, r]));
+
+  const stations = { features: allStations
+    .filter(s => s.sub_network === "HydroMet")
+    .map(s => {
+      const st = statusByStation.get(s.station);
+      if (!st || st.status !== "active") return null;   // active in the status API
+      if (!(s.station in stationDirs))   return null;    // has photos on S3
+      let cell = st.ace_grid ? cellByCode.get(normCell(st.ace_grid)) : null;
+      if (!cell) cell = grid.features.find(f => d3.geoContains(f, [s.longitude, s.latitude]));
+      if (!cell) return null;
+      return { type: "Feature", geometry: cell.geometry,
+               properties: { station: s.station, name: s.name } };
+    })
+    .filter(Boolean) };
 
   const allDirs = DIR_ORDER.filter(d =>
     Object.values(stationDirs).some(dirs => d in dirs)
