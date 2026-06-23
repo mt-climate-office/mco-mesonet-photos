@@ -1,7 +1,13 @@
+# Montana Mesonet Photo Explorer — map geometry
+#
+# Builds docs/grid.geojson, the cell geometry the explorer draws Montana with,
+# and the explorer's only static input. Station status, grid-cell assignments,
+# and photo availability are all read live from the Mesonet API when the page
+# loads, so stations appear and disappear on their own. Re-run this script only
+# when the underlying grid definition changes — never just to add a station.
+
 library(tidyverse)
 library(sf)
-library(magrittr)
-library(rairtable)
 
 # Custom Albers parameterization from Alex Stum, 2021-10-20
 umrb_grid_proj <-
@@ -14,9 +20,13 @@ umrb_grid_proj <-
   {paste0("+",names(.),"=",., collapse = " ")} %>%
   sf::st_crs()
 
-edge <- 
+edge <-
   sqrt(500)
 
+# The Upper Missouri River Basin planning grid in the custom Albers projection
+# above: a regular grid clipped to Montana, with each cell tagged by its ID
+# (`cell`) from the planning shapefile. Cells with no planned site stay
+# unlabeled (`cell` = NA).
 mt_grid <-
   raster::raster(crs = umrb_grid_proj$input,
                  resolution = c(edge,edge),
@@ -36,64 +46,16 @@ mt_grid <-
                 dplyr::filter(Status != "Less than 40%") %>%
                 sf::st_centroid(),
               join = sf::st_contains) %>%
-  # dplyr::filter(!is.na(cell)) %>%
-  dplyr::select(`Grid Cell ID` = cell)
+  dplyr::select(cell)
 
-mesonet_stations <- 
-  readr::read_csv("https://mesonet.climate.umt.edu/api/stations?type=csv") %>%
-  dplyr::filter(sub_network == "HydroMet") %>%
-  sf::st_as_sf(coords = c("longitude", "latitude"), crs = 4326) %>%
-  dplyr::select(station, name, date_installed, nwsli_id)
+# Write the whole grid. Labeled cells (`cell` = "A-12", …) are the planning
+# sites the explorer snaps stations onto via the API's `ace_grid` field.
+# Unlabeled cells (western Montana, outside the planned grid) carry no site but
+# are kept so the explorer can still place off-grid camera stations (e.g. CSKT
+# Bison Range, Lubrecht HQ) in the cell that contains them. The explorer only
+# draws cells with an active station, so unlabeled cells add no visual noise.
+grid_sf <-
+  mt_grid %>%
+  sf::st_transform("EPSG:4326")
 
-umrb_status <-
-  readxl::read_excel("data/Site Status Databas 10 MARCH 2026.xlsx") %>%
-  dplyr::filter(`Station Status` != "Removed",
-                State == "Montana",
-                !is.na(`NWS LI ID`)) %>%
-  dplyr::select(`Grid Cell ID`,
-                nwsli_id = `NWS LI ID`,
-                `Station Status`) %>%
-  tidyr::separate_wider_delim(`Grid Cell ID`, 
-                              delim = stringr::regex("-| "),
-                              names = c("Cell","Number"),
-                              too_few = "align_start") %>%
-  dplyr::mutate(Number = as.numeric(Number)) %>%
-  tidyr::unite(
-    col = `Grid Cell ID`, 
-    c(Cell, Number),
-    sep = "-"
-  )
-
-mesonet_stations_sf <-
-  mesonet_stations %>%
-  dplyr::left_join(umrb_status, 
-                   by = "nwsli_id") %>%
-  dplyr::arrange(nwsli_id) %>%
-  dplyr::mutate(
-    `Grid Cell ID` = 
-      ifelse(station == "acerapl2", "H-11", `Grid Cell ID`)) %>%
-  # dplyr::filter(!is.na(`Grid Cell ID`)) %>%
-  dplyr::left_join(mt_grid %>%
-                     sf::st_centroid() %>%
-                     sf::st_transform(4326) %>%
-                     tibble::as_tibble() %>%
-                     dplyr::filter(!is.na(`Grid Cell ID`)) %>%
-                     dplyr::select(`Grid Cell ID`,
-                                   geometry_cell = geometry),
-                   by = "Grid Cell ID") %>%
-  tibble::as_tibble() %>%
-  # dplyr::rowwise() %>%
-  dplyr::mutate(geometry = ifelse(!is.na(`Grid Cell ID`), geometry_cell, geometry) %>%
-                  sf::st_as_sfc(crs = 4326)) %>%
-  dplyr::select(-geometry_cell) %>%
-  sf::st_as_sf() %>%
-  sf::st_join(x = mt_grid %>%
-                sf::st_transform(4326),
-              y = .,
-              join = sf::st_contains) %>%
-  dplyr::filter(!is.na(station)) %>%
-  dplyr::select(station, name) %>%
-  sf::st_transform("EPSG:4326") %T>%
-  sf::write_sf("docs/stations.geojson",
-               delete_dsn = TRUE)
-
+sf::write_sf(grid_sf, "docs/grid.geojson", delete_dsn = TRUE)
