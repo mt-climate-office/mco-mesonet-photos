@@ -819,7 +819,10 @@ function tribalLabelPaint() {
   };
 }
 function stateLinePaint() {
-  return { 'line-color': cssVar('--accent-light'), 'line-width': 1.8, 'line-opacity': 0.9 };
+  // Match the Status map: a neutral boundary (near-white on dark, near-black on
+  // light) rather than the accent blue.
+  const dark = document.documentElement.dataset.theme !== 'light';
+  return { 'line-color': dark ? '#e8ecf0' : '#1a1a2e', 'line-width': 2, 'line-opacity': 0.55 };
 }
 function countiesLinePaint() {
   return { 'line-color': cssVar('--text-muted'), 'line-width': 0.6, 'line-opacity': 0.5 };
