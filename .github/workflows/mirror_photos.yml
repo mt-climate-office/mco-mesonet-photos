@@ -62,6 +62,14 @@ jobs:
   preview:
     name: Update social preview image
     needs: mirror
+    # The mirror job runs many times a day, but the social preview only needs
+    # refreshing once daily.  Run it after the last mirror of the day (5:00 PM
+    # local — "0 23" in MDT / "0 0" in MST, both forms listed so the DST
+    # adjuster doesn't need to touch this line), or on manual dispatch.
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      github.event.schedule == '0 23 * * *' ||
+      github.event.schedule == '0 0 * * *'
     runs-on: ubuntu-latest
     permissions:
       contents: write   # needed to commit docs/preview.png back to the repo
@@ -87,7 +95,36 @@ jobs:
         run: |
           git config user.name  "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add docs/preview.png
-          git diff --staged --quiet || git commit -m "chore: update social preview image [skip ci]"
-          git pull --rebase
-          git push
+
+          # preview.png is a regenerated, non-deterministic binary, so it can't
+          # be git-merged.  Instead of rebasing our commit onto origin/main
+          # (which produces an unresolvable binary conflict whenever origin has
+          # also updated the file), we always reset to the latest origin/main
+          # and re-apply our freshly generated file on top.  Retry if origin
+          # moves under us between fetch and push.
+          cp docs/preview.png "$RUNNER_TEMP/preview.png"
+
+          for attempt in 1 2 3 4 5; do
+            git fetch origin main
+            git reset --hard origin/main
+            cp "$RUNNER_TEMP/preview.png" docs/preview.png
+            git add docs/preview.png
+
+            if git diff --staged --quiet; then
+              echo "Preview unchanged from origin/main; nothing to commit."
+              exit 0
+            fi
+
+            git commit -m "chore: update social preview image [skip ci]"
+
+            if git push; then
+              echo "Pushed preview update on attempt $attempt."
+              exit 0
+            fi
+
+            echo "Push rejected (attempt $attempt); origin/main moved, retrying…"
+            sleep 5
+          done
+
+          echo "Failed to push preview after 5 attempts." >&2
+          exit 1
