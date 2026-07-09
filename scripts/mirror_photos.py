@@ -178,7 +178,12 @@ def main() -> None:
     http = requests.Session()
     http.headers["User-Agent"] = "mesonet-photo-mirror/1.0"
     http.mount("https://", requests.adapters.HTTPAdapter(
-        max_retries=requests.adapters.Retry(total=3, backoff_factor=0.5),
+        # Ride out ~2 minutes of source-server downtime (backoff: 2, 4, 8,
+        # 16, 32, 64s) rather than failing the whole run on a brief blip.
+        max_retries=requests.adapters.Retry(
+            total=6, backoff_factor=2,
+            status_forcelist=[500, 502, 503, 504],
+        ),
     ))
 
     # ── Step 1: Load manifest ─────────────────────────────────────────────────
