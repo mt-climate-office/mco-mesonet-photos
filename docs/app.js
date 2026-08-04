@@ -673,7 +673,8 @@ function hideTooltip() { tooltipEl.classList.remove("visible"); }
 // (admission rule: >= 2 MCO properties).
 let _activeSearchIndex = -1;
 
-// Collapse-to-icon + overlay is the kit's component as of v0.5.0 (this app
+// Collapse-to-icon + overlay is the kit's component as of v0.5.0, collapsing at
+// the compact edge (≤640px) since v0.6.0. (This app
 // prototyped it; mesonet-status became the second consumer, meeting the kit's
 // admission rule). The kit owns the mechanics — open/close, focus in and out,
 // outside-dismiss, and clearing state when the viewport widens. This app keeps
