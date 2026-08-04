@@ -6,7 +6,7 @@ The Montana Mesonet Photo Explorer: a static MapLibre single-page app in `docs/`
 ## House style
 
 This app consumes mco-web-style (pinned + SRI in `docs/index.html`; currently
-**v0.3.1**). Design tokens, a11y mandates, and interaction conventions: see
+**v0.6.0** — check the tag in that file rather than trusting this line). Design tokens, a11y mandates, and interaction conventions: see
 HOUSE-STYLE.md in https://github.com/mt-climate-office/mco-web-style — tokens
 only (no raw hexes), `--accent` is fill-only, `aria-pressed` drives toggle
 styling, canvas data needs a live region + sr-only table twin. To change shared
@@ -20,8 +20,11 @@ segments + `<select>` fallback, `updateSocialMeta`, and the branded PNG export.
 Marked kit-overrides in this app:
 - **No hillshade** — the photo mosaic is the figure; relief under opaque photo
   rasters would only show in the untiled west while competing with the imagery.
-- Navbar wraps at ≤750px (rather than shedding the brand) and lifts `.nav-meta`
-  beside the brand there, so keeping the brand costs no extra navbar height.
+- Navbar wraps at ≤1060px and lifts `.nav-meta` beside the brand there, so the
+  controls get a full-width row. The brand itself collapses to the logo badge at
+  ≤750px — that is the kit default, not an override. Search collapsing to an icon
+  + overlay at ≤640px is the kit's `.mco-search-collapse` component (this app
+  prototyped it; mesonet-status adopting it is what moved it into the kit).
 
 ## Landing-slot fallback
 
