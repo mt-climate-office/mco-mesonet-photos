@@ -77,8 +77,8 @@
         crossorigin="anonymous">
   <!-- mco-web-style: tokens (3 themes), a11y utilities, navbar/toast/tooltip/
        modal shells, MapLibre polish. Pinned + SRI per house policy. -->
-  <link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/mt-climate-office/mco-web-style@0.3.1/theme/mco-theme.css"
-        integrity="sha384-5jJ21b51CkMNt/J34JqlFzd67/QnvLRFwJ4DgM99nRyV5LvAwpwsyWbSCCp2Mq6B"
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/mt-climate-office/mco-web-style@0.4.0/theme/mco-theme.css"
+        integrity="sha384-ob4DwEzU1rHRMnXfmdHRb9E5uKuPDoNmlqymw1fQVcPjRyujGyvvGv4vztlOhzZF"
         crossorigin="anonymous">
 
   <style>
@@ -255,20 +255,28 @@
       #dir-group  { display: none; }
       .dir-select { display: block; }
     }
-    /* The brand block now survives to phone widths (kit default sheds only the
-       subtitle), so wrapping starts at 750 rather than 640 — below that the
-       controls take a second row instead of overflowing the bar. */
-    @media (min-width: 751px) {
+    /* This bar is control-dense: search + date stepper + time + direction +
+       five buttons don't fit on one row until ~1000px even with the brand
+       collapsed, so wrapping is allowed below 1060 (where the kit also tightens
+       chrome and the direction group becomes a <select>). */
+    @media (min-width: 1061px) {
       .mco-navbar { flex-wrap: nowrap; }
       .controls   { flex-wrap: nowrap; }
     }
-    /* Once wrapping starts, the brand would otherwise own an entire row by
-       itself. Lift the icon buttons up beside it and give the controls their
-       own full-width row — the mesonet-status pattern, one row cheaper on a
-       phone. CSS `order` moves the visual position only; tab order is intact. */
-    @media (max-width: 750px) {
+    /* Once wrapping starts, give the controls their own full-width row and lift
+       the icon buttons up beside the brand — the mesonet-status pattern, one row
+       cheaper. CSS `order` moves the visual position only; tab order is intact. */
+    @media (max-width: 1060px) {
       .nav-meta { order: 1; }
       .controls { order: 2; flex-basis: 100%; }
+    }
+    /* Below 460px the search field can't earn its width against the date, time
+       and direction controls, so it sheds entirely. The `/` shortcut checks
+       visibility before focusing it (app.js) — a shortcut that focuses a hidden
+       field is worse than no shortcut. Station galleries stay reachable by
+       tapping a cell. */
+    @media (max-width: 460px) {
+      .search-wrap { display: none; }
     }
     @media (max-width: 640px) {
       input[type="search"] { width: 150px; }
@@ -502,10 +510,10 @@
         integrity="sha384-MYTfGytf3SxNyO7ZAu/U0wHCcs3NpqE92Q3wBz5PQhat8kEA/wbwb9qY6H/JLyuR"
         crossorigin="anonymous"></script>
 <!-- mco-web-style (window.MCO / MCO.map) -->
-<script src="https://cdn.jsdelivr.net/gh/mt-climate-office/mco-web-style@0.3.1/core/mco-core.js"
-        integrity="sha384-BHWqotPZgNN9VvHA0OfSUux8LD04tIOXhCzfxgCvfy5hmYARIl8ifPU0FHm6VNAD"
+<script src="https://cdn.jsdelivr.net/gh/mt-climate-office/mco-web-style@0.4.0/core/mco-core.js"
+        integrity="sha384-h9n9uXGmCd14mTv///2kjEW/QqGaQwou45HW+YO18U5JYpvKTSCjaLT3cmiMlUNN"
         crossorigin="anonymous"></script>
-<script src="https://cdn.jsdelivr.net/gh/mt-climate-office/mco-web-style@0.3.1/map/mco-map.js"
+<script src="https://cdn.jsdelivr.net/gh/mt-climate-office/mco-web-style@0.4.0/map/mco-map.js"
         integrity="sha384-0aF67+MSXmcocGs8r3qiehgDNzgXo9F48olS5OX575wO2llw2cuGcqLpd6+L7D76"
         crossorigin="anonymous"></script>
 <script src="app.js"></script>

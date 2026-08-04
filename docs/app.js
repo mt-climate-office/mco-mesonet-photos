@@ -911,6 +911,9 @@ window.addEventListener("keydown", (e) => {
   if (e.key === '/' && !e.metaKey && !e.ctrlKey && !e.altKey) {
     const t = e.target;
     if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.tagName === 'SELECT' || t.isContentEditable)) return;
+    // Search is shed below 460px — never focus a hidden field (offsetParent is
+    // null while it's display:none).
+    if (searchInput.offsetParent === null) return;
     e.preventDefault();
     searchInput.focus();
     searchInput.select();
