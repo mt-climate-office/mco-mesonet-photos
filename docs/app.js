@@ -673,45 +673,19 @@ function hideTooltip() { tooltipEl.classList.remove("visible"); }
 // (admission rule: >= 2 MCO properties).
 let _activeSearchIndex = -1;
 
-// Below this width the field collapses into #btn-search-toggle and expands as an
-// overlay bar. KEEP IN SYNC with the 460px block in index.html.
-const SEARCH_COLLAPSE_MQ = '(max-width: 460px)';
-const _searchMq = window.matchMedia(SEARCH_COLLAPSE_MQ);
-const searchWrap = document.getElementById('search-wrap');
+// Collapse-to-icon + overlay is the kit's component as of v0.5.0 (this app
+// prototyped it; mesonet-status became the second consumer, meeting the kit's
+// admission rule). The kit owns the mechanics — open/close, focus in and out,
+// outside-dismiss, and clearing state when the viewport widens. This app keeps
+// what only it knows: Esc precedence against its own suggestions dropdown, the
+// `/` shortcut, and which control the gallery should treat as its opener.
 const btnSearchToggle = document.getElementById('btn-search-toggle');
-
-const searchCollapsed = () => _searchMq.matches;
-const searchOverlayOpen = () => searchWrap.classList.contains('is-open');
-
-function openSearchOverlay() {
-  searchWrap.classList.add('is-open');
-  btnSearchToggle.setAttribute('aria-expanded', 'true');
-  searchInput.focus();
-  searchInput.select();
-}
-// restoreFocus: false when something else is about to take focus (a gallery
-// opening), so we don't yank it back to the toggle first.
-function closeSearchOverlay(opts) {
-  if (!searchOverlayOpen()) return;
-  searchWrap.classList.remove('is-open');
-  btnSearchToggle.setAttribute('aria-expanded', 'false');
-  hideSearchDropdown();
-  searchInput.value = '';
-  if (!opts || opts.restoreFocus !== false) btnSearchToggle.focus();
-}
-btnSearchToggle.addEventListener('click', () => {
-  if (searchOverlayOpen()) closeSearchOverlay();
-  else openSearchOverlay();
+const searchCollapse = MCO.initSearchCollapse({
+  wrap: document.getElementById('search-wrap'),
+  toggle: btnSearchToggle,
+  input: searchInput,
+  onClose: hideSearchDropdown,
 });
-// Tapping anywhere outside the overlay dismisses it (map, another control).
-document.addEventListener('pointerdown', (e) => {
-  if (!searchOverlayOpen()) return;
-  if (searchWrap.contains(e.target) || btnSearchToggle.contains(e.target)) return;
-  closeSearchOverlay({ restoreFocus: false });
-});
-// Widening past the breakpoint puts the field back in the bar — drop the
-// overlay state so aria-expanded can't go stale on a now-hidden toggle.
-_searchMq.addEventListener('change', () => closeSearchOverlay({ restoreFocus: false }));
 
 function matchScore(s, q) {
   const n = s.name.toLowerCase(), id = s.station.toLowerCase();
@@ -776,8 +750,8 @@ function selectStation(stationId) {
   // closing the dialog returns them there. In collapsed mode that's the toggle
   // — the field itself is display:none once the overlay closes, and focusing a
   // hidden element silently drops focus to <body>.
-  const opener = searchCollapsed() ? btnSearchToggle : searchInput;
-  closeSearchOverlay({ restoreFocus: false });
+  const opener = searchCollapse.isCollapsed() ? btnSearchToggle : searchInput;
+  searchCollapse.close({ restoreFocus: false });
   flyToAndOpen(stationId, opener);
 }
 function setActiveSearchItem(idx) {
@@ -797,7 +771,7 @@ searchInput.addEventListener('keydown', (e) => {
   if (e.key === 'Escape') {
     // Esc closes the dropdown first, then the overlay — one step at a time.
     if (!searchDropdown.hidden) { searchInput.value = ''; hideSearchDropdown(); return; }
-    if (searchOverlayOpen()) { closeSearchOverlay(); return; }
+    if (searchCollapse.isOpen()) { searchCollapse.close(); return; }
     searchInput.value = '';
     return;
   }
@@ -1050,7 +1024,7 @@ window.addEventListener("keydown", (e) => {
     e.preventDefault();
     // Below 460px the field is collapsed — open the overlay instead of focusing
     // a hidden input (which would silently do nothing).
-    if (searchCollapsed()) { openSearchOverlay(); return; }
+    if (searchCollapse.isCollapsed()) { searchCollapse.open(); return; }
     searchInput.focus();
     searchInput.select();
   }

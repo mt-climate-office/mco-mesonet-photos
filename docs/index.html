@@ -77,8 +77,8 @@
         crossorigin="anonymous">
   <!-- mco-web-style: tokens (3 themes), a11y utilities, navbar/toast/tooltip/
        modal shells, MapLibre polish. Pinned + SRI per house policy. -->
-  <link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/mt-climate-office/mco-web-style@0.4.0/theme/mco-theme.css"
-        integrity="sha384-soPmHOFCFcClLxBqw0pIi6PBRAk+IHF5dsLOkNQ5ntPrEN3LRxI0fRmZsIg67uLp"
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/mt-climate-office/mco-web-style@0.5.0/theme/mco-theme.css"
+        integrity="sha384-yTfCc/27kQRfLP0rzwYvxO2RwCzUlsGq+vNicipNICYw0NAVWiUH/DCSJMBiAnjZ"
         crossorigin="anonymous">
 
   <style>
@@ -270,6 +270,90 @@
       .nav-meta { order: 1; }
       .controls { order: 2; flex-basis: 100%; }
     }
+    /* Below 460px the search field collapses into an icon and reopens as an
+       overlay bar — kit component as of v0.5.0 (.mco-search-collapse /
+       .mco-search-toggle + MCO.initSearchCollapse). The classes are on the
+       markup above; nothing to style here. */
+
+    /* ── Photo gallery dialog (app-local) ──────────────────────────────────── */
+    .modal-box {
+      background: var(--bg-surface); border: 1px solid var(--border);
+      border-radius: 10px; width: min(860px, calc(100vw - 4rem));
+      max-height: calc(100dvh - 4rem); overflow-y: auto; padding: 1.25rem;
+      box-shadow: var(--shadow);
+    }
+    .modal-header { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 1rem; gap: 1rem; }
+    .modal-station-name { font-size: 1.1rem; font-weight: 700; color: var(--accent-line); }
+    .modal-timestamp { font-size: 0.75rem; color: var(--text-muted); margin-top: 0.15rem; }
+
+    .photo-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 0.75rem; }
+    .photo-empty { font-size: 0.85rem; color: var(--text-muted); padding: 0.5rem 0; }
+    .photo-card { text-align: center; }
+    /* A real button so enlarging has a keyboard twin and a focus target
+       (HOUSE-STYLE §5.8); the kit's focus ring applies to it unchanged. */
+    .photo-btn {
+      display: block; width: 100%; padding: 0; border: 0;
+      background: none; cursor: zoom-in; border-radius: 6px;
+    }
+    .photo-card img {
+      width: 100%; aspect-ratio: 4 / 3; object-fit: cover; border-radius: 6px;
+      background: var(--bg-deep); border: 1px solid var(--border); display: block;
+    }
+    .photo-dir-label { font-size: 0.7rem; color: var(--text-muted); margin-top: 0.3rem; }
+    .modal-dash-link { margin-top: 1rem; text-align: center; }
+    .modal-dash-link a {
+      display: inline-block; padding: 0.5rem 1.5rem;
+      background: var(--accent); color: var(--text-on-accent);
+      border-radius: 6px; font-size: 0.9rem; font-weight: 600;
+      text-decoration: none; transition: box-shadow var(--transition);
+    }
+    /* Hover ring rather than a lighter fill: --text-on-accent is only
+       guaranteed against --accent itself (kit contrast contract §2). */
+    .modal-dash-link a:hover { box-shadow: 0 0 0 2px var(--accent-line); }
+
+    /* ── Lightbox (app-local) ──────────────────────────────────────────────── */
+    /* Always a near-black backdrop in every theme, so the two colors below are
+       measured against it rather than tokenised: #ccc on rgba(0,0,0,0.88) is
+       ~12:1 and #fff is ~19:1 (WCAG 1.4.3). */
+    #lightbox { padding: 0; }
+    #lightbox::backdrop { background: rgba(0,0,0,0.88); backdrop-filter: blur(6px); }
+    #lightbox-img {
+      display: block; max-width: min(1200px, calc(100vw - 2rem));
+      max-height: calc(100dvh - 5rem); border-radius: 6px; object-fit: contain;
+    }
+    .lightbox-caption { text-align: center; color: #ccc; font-size: 0.8rem; margin-top: 0.5rem; }
+    .lightbox-close {
+      position: absolute; top: -2rem; right: 0; background: none; border: none;
+      color: #fff; font-size: 1.75rem; line-height: 1; cursor: pointer; padding: 0 0.25rem;
+    }
+
+    /* ── Info modal extras (shell + sections come from the kit) ────────────── */
+    .info-icon { display: inline-flex; align-items: center; vertical-align: middle; margin: 0 3px 1px 0; opacity: 0.8; }
+    .info-icon svg { stroke: currentColor; }
+
+    /* ── Responsive ────────────────────────────────────────────────────────── */
+    /* Breakpoints 1400 (labels) / 1060 (chrome) / 750 (subtitle) come from the
+       kit. Below 1060 the segmented direction group doesn't fit — swap in the
+       <select>. */
+    @media (max-width: 1060px) {
+      #dir-group  { display: none; }
+      .dir-select { display: block; }
+    }
+    /* This bar is control-dense: search + date stepper + time + direction +
+       five buttons don't fit on one row until ~1000px even with the brand
+       collapsed, so wrapping is allowed below 1060 (where the kit also tightens
+       chrome and the direction group becomes a <select>). */
+    @media (min-width: 1061px) {
+      .mco-navbar { flex-wrap: nowrap; }
+      .controls   { flex-wrap: nowrap; }
+    }
+    /* Once wrapping starts, give the controls their own full-width row and lift
+       the icon buttons up beside the brand — the mesonet-status pattern, one row
+       cheaper. CSS `order` moves the visual position only; tab order is intact. */
+    @media (max-width: 1060px) {
+      .nav-meta { order: 1; }
+      .controls { order: 2; flex-basis: 100%; }
+    }
     /* Below 460px the search field can't earn its width against the date, time
        and direction controls — so it collapses into an icon grouped with the
        other nav buttons, and expands as a full-width overlay bar under the
@@ -341,7 +425,7 @@
   <div class="controls">
     <!-- Search a station. Press / anywhere to jump here. Custom listbox
          dropdown (not <datalist>) so the popup is fully themed. -->
-    <div class="search-wrap" id="search-wrap">
+    <div class="search-wrap mco-search-collapse" id="search-wrap">
       <label for="search-input" class="sr-only">Search stations</label>
       <input type="search" id="search-input"
              role="combobox" aria-autocomplete="list" aria-haspopup="listbox"
@@ -394,7 +478,7 @@
     <!-- Narrow viewports only (see the 460px block above): collapses the search
          field into this disclosure, which expands it as an overlay bar under the
          navbar. Hidden at wider widths, where the field itself is in .controls. -->
-    <button type="button" class="nav-btn icon-only" id="btn-search-toggle"
+    <button type="button" class="nav-btn icon-only mco-search-toggle" id="btn-search-toggle"
             aria-expanded="false" aria-controls="search-wrap" aria-label="Search stations">
       <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke-width="2"
            stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
@@ -543,10 +627,10 @@
         integrity="sha384-MYTfGytf3SxNyO7ZAu/U0wHCcs3NpqE92Q3wBz5PQhat8kEA/wbwb9qY6H/JLyuR"
         crossorigin="anonymous"></script>
 <!-- mco-web-style (window.MCO / MCO.map) -->
-<script src="https://cdn.jsdelivr.net/gh/mt-climate-office/mco-web-style@0.4.0/core/mco-core.js"
-        integrity="sha384-h9n9uXGmCd14mTv///2kjEW/QqGaQwou45HW+YO18U5JYpvKTSCjaLT3cmiMlUNN"
+<script src="https://cdn.jsdelivr.net/gh/mt-climate-office/mco-web-style@0.5.0/core/mco-core.js"
+        integrity="sha384-hfL64718oLYH6thf6wwatzws4QkVAx1uSU3Sxk8zy4KVzfJalV/a27lwE8vV4dn+"
         crossorigin="anonymous"></script>
-<script src="https://cdn.jsdelivr.net/gh/mt-climate-office/mco-web-style@0.4.0/map/mco-map.js"
+<script src="https://cdn.jsdelivr.net/gh/mt-climate-office/mco-web-style@0.5.0/map/mco-map.js"
         integrity="sha384-0aF67+MSXmcocGs8r3qiehgDNzgXo9F48olS5OX575wO2llw2cuGcqLpd6+L7D76"
         crossorigin="anonymous"></script>
 <script src="app.js"></script>
