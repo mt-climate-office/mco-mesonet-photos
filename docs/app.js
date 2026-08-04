@@ -584,8 +584,50 @@ function hideTooltip() { tooltipEl.classList.remove("visible"); }
 
 // ── Search ────────────────────────────────────────────────────────────────────
 // App-local by design: the kit has deliberately not absorbed the search
-// combobox yet (MIGRATING.md § kit-deferred).
+// combobox yet (MIGRATING.md § kit-deferred). The collapse-to-icon behavior
+// below is likewise app-local — a kit candidate if a second property wants it
+// (admission rule: >= 2 MCO properties).
 let _activeSearchIndex = -1;
+
+// Below this width the field collapses into #btn-search-toggle and expands as an
+// overlay bar. KEEP IN SYNC with the 460px block in index.html.
+const SEARCH_COLLAPSE_MQ = '(max-width: 460px)';
+const _searchMq = window.matchMedia(SEARCH_COLLAPSE_MQ);
+const searchWrap = document.getElementById('search-wrap');
+const btnSearchToggle = document.getElementById('btn-search-toggle');
+
+const searchCollapsed = () => _searchMq.matches;
+const searchOverlayOpen = () => searchWrap.classList.contains('is-open');
+
+function openSearchOverlay() {
+  searchWrap.classList.add('is-open');
+  btnSearchToggle.setAttribute('aria-expanded', 'true');
+  searchInput.focus();
+  searchInput.select();
+}
+// restoreFocus: false when something else is about to take focus (a gallery
+// opening), so we don't yank it back to the toggle first.
+function closeSearchOverlay(opts) {
+  if (!searchOverlayOpen()) return;
+  searchWrap.classList.remove('is-open');
+  btnSearchToggle.setAttribute('aria-expanded', 'false');
+  hideSearchDropdown();
+  searchInput.value = '';
+  if (!opts || opts.restoreFocus !== false) btnSearchToggle.focus();
+}
+btnSearchToggle.addEventListener('click', () => {
+  if (searchOverlayOpen()) closeSearchOverlay();
+  else openSearchOverlay();
+});
+// Tapping anywhere outside the overlay dismisses it (map, another control).
+document.addEventListener('pointerdown', (e) => {
+  if (!searchOverlayOpen()) return;
+  if (searchWrap.contains(e.target) || btnSearchToggle.contains(e.target)) return;
+  closeSearchOverlay({ restoreFocus: false });
+});
+// Widening past the breakpoint puts the field back in the bar — drop the
+// overlay state so aria-expanded can't go stale on a now-hidden toggle.
+_searchMq.addEventListener('change', () => closeSearchOverlay({ restoreFocus: false }));
 
 function matchScore(s, q) {
   const n = s.name.toLowerCase(), id = s.station.toLowerCase();
@@ -646,9 +688,13 @@ function hideSearchDropdown() {
 function selectStation(stationId) {
   hideSearchDropdown();
   searchInput.value = '';
-  // Focus stays on the search box: it becomes the gallery's opener, so closing
-  // the dialog returns the keyboard user to where they were.
-  flyToAndOpen(stationId, searchInput);
+  // Whichever control the user came from becomes the gallery's opener, so
+  // closing the dialog returns them there. In collapsed mode that's the toggle
+  // — the field itself is display:none once the overlay closes, and focusing a
+  // hidden element silently drops focus to <body>.
+  const opener = searchCollapsed() ? btnSearchToggle : searchInput;
+  closeSearchOverlay({ restoreFocus: false });
+  flyToAndOpen(stationId, opener);
 }
 function setActiveSearchItem(idx) {
   const items = searchDropdown.querySelectorAll('li');
@@ -664,7 +710,13 @@ searchInput.addEventListener('input', () => showSearchDropdown(searchInput.value
 searchInput.addEventListener('focus', () => { if (searchInput.value) showSearchDropdown(searchInput.value); });
 searchInput.addEventListener('blur',  () => setTimeout(hideSearchDropdown, 120));
 searchInput.addEventListener('keydown', (e) => {
-  if (e.key === 'Escape') { searchInput.value = ''; hideSearchDropdown(); return; }
+  if (e.key === 'Escape') {
+    // Esc closes the dropdown first, then the overlay — one step at a time.
+    if (!searchDropdown.hidden) { searchInput.value = ''; hideSearchDropdown(); return; }
+    if (searchOverlayOpen()) { closeSearchOverlay(); return; }
+    searchInput.value = '';
+    return;
+  }
   if (searchDropdown.hidden) return;
   const items = searchDropdown.querySelectorAll('li');
   if (!items.length) return;
@@ -911,10 +963,10 @@ window.addEventListener("keydown", (e) => {
   if (e.key === '/' && !e.metaKey && !e.ctrlKey && !e.altKey) {
     const t = e.target;
     if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.tagName === 'SELECT' || t.isContentEditable)) return;
-    // Search is shed below 460px — never focus a hidden field (offsetParent is
-    // null while it's display:none).
-    if (searchInput.offsetParent === null) return;
     e.preventDefault();
+    // Below 460px the field is collapsed — open the overlay instead of focusing
+    // a hidden input (which would silently do nothing).
+    if (searchCollapsed()) { openSearchOverlay(); return; }
     searchInput.focus();
     searchInput.select();
   }

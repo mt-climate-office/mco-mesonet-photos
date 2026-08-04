@@ -78,7 +78,7 @@
   <!-- mco-web-style: tokens (3 themes), a11y utilities, navbar/toast/tooltip/
        modal shells, MapLibre polish. Pinned + SRI per house policy. -->
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/mt-climate-office/mco-web-style@0.4.0/theme/mco-theme.css"
-        integrity="sha384-ob4DwEzU1rHRMnXfmdHRb9E5uKuPDoNmlqymw1fQVcPjRyujGyvvGv4vztlOhzZF"
+        integrity="sha384-soPmHOFCFcClLxBqw0pIi6PBRAk+IHF5dsLOkNQ5ntPrEN3LRxI0fRmZsIg67uLp"
         crossorigin="anonymous">
 
   <style>
@@ -271,12 +271,35 @@
       .controls { order: 2; flex-basis: 100%; }
     }
     /* Below 460px the search field can't earn its width against the date, time
-       and direction controls, so it sheds entirely. The `/` shortcut checks
-       visibility before focusing it (app.js) — a shortcut that focuses a hidden
-       field is worse than no shortcut. Station galleries stay reachable by
-       tapping a cell. */
+       and direction controls — so it collapses into an icon grouped with the
+       other nav buttons, and expands as a full-width overlay bar under the
+       navbar when opened. #btn-search-toggle is the disclosure; app.js moves
+       focus into the field on open and back to the icon on close.
+       KEEP 460px IN SYNC with SEARCH_COLLAPSE_MQ in app.js. */
+    #btn-search-toggle { display: none; }
     @media (max-width: 460px) {
+      #btn-search-toggle { display: flex; }
       .search-wrap { display: none; }
+      .search-wrap.is-open {
+        display: flex;
+        /* .mco-navbar is the positioned ancestor (kit), so top:100% lands the
+           bar directly beneath the whole wrapped navbar. */
+        position: absolute;
+        top: 100%; left: 0; right: 0;
+        z-index: var(--z-flyout);
+        padding: 0.5rem max(0.75rem, env(safe-area-inset-right))
+                 0.5rem max(0.75rem, env(safe-area-inset-left));
+        background: var(--glass);
+        backdrop-filter: blur(16px); -webkit-backdrop-filter: blur(16px);
+        border-bottom: 1px solid var(--border);
+        box-shadow: var(--shadow);
+      }
+      /* Fill the bar; flex-basis beats the field's fixed/focus widths. */
+      .search-wrap.is-open input[type="search"],
+      .search-wrap.is-open input[type="search"]:focus { flex: 1 1 0; width: auto; }
+      /* The / hint is a pointer-and-keyboard desktop affordance; in the overlay
+         it would just sit on top of the text being typed. */
+      .search-wrap.is-open .search-kbd { display: none; }
     }
     @media (max-width: 640px) {
       input[type="search"] { width: 150px; }
@@ -318,7 +341,7 @@
   <div class="controls">
     <!-- Search a station. Press / anywhere to jump here. Custom listbox
          dropdown (not <datalist>) so the popup is fully themed. -->
-    <div class="search-wrap">
+    <div class="search-wrap" id="search-wrap">
       <label for="search-input" class="sr-only">Search stations</label>
       <input type="search" id="search-input"
              role="combobox" aria-autocomplete="list" aria-haspopup="listbox"
@@ -368,6 +391,16 @@
   </div>
 
   <div class="nav-meta">
+    <!-- Narrow viewports only (see the 460px block above): collapses the search
+         field into this disclosure, which expands it as an overlay bar under the
+         navbar. Hidden at wider widths, where the field itself is in .controls. -->
+    <button type="button" class="nav-btn icon-only" id="btn-search-toggle"
+            aria-expanded="false" aria-controls="search-wrap" aria-label="Search stations">
+      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke-width="2"
+           stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>
+      </svg>
+    </button>
     <button type="button" class="nav-btn" id="btn-counties" aria-pressed="false" aria-label="Toggle county and tribal nation boundaries">
       <svg width="14" height="14" viewBox="0 0 24 24" fill="none"
            stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
