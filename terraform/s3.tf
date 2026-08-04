@@ -3,7 +3,16 @@ resource "aws_s3_bucket" "photos" {
   tags   = local.common_tags
 }
 
-# Keep the bucket private — CloudFront OAC handles all public reads.
+# Keep the bucket private — CloudFront OAC handles ALL public reads (the photo
+# explorer distro and the data CDN, data2.climate.umt.edu/mesonet/*).
+#
+# History: from ~2026-05 to 2026-08-04 these flags were flipped off out-of-band
+# to allow a public-read statement on air-quality/* (anonymous direct-S3
+# access for the mesonet-aq archive's R consumers). Removed deliberately
+# 2026-08-04 (Kyle: clean break): air-quality is served through the CDN at
+# data2.climate.umt.edu/mesonet/air-quality/ like everything else, and direct
+# unauthenticated S3-endpoint reads are no longer supported. If something
+# out there still reads the raw endpoint, THIS is why it started 403ing.
 resource "aws_s3_bucket_public_access_block" "photos" {
   bucket = aws_s3_bucket.photos.id
 
@@ -30,7 +39,32 @@ resource "aws_s3_bucket_policy" "photos" {
         Resource = "${aws_s3_bucket.photos.arn}/*"
         Condition = {
           StringEquals = {
-            "AWS:SourceArn" = aws_cloudfront_distribution.photos.arn
+            # Two distributions read this bucket: the photo explorer (this
+            # repo) and the MCO data CDN (mco-data-cdn repo — data2.climate.
+            # umt.edu serves the whole bucket under /mesonet/*, incl. the
+            # living Parquet archive in data/). The data CDN's ARN is
+            # hardcoded because its state lives in the other repo.
+            "AWS:SourceArn" = [
+              aws_cloudfront_distribution.photos.arn,
+              "arn:aws:cloudfront::202533506375:distribution/E24I4W0YAJ2A27",
+            ]
+          }
+        }
+      },
+      {
+        # Time travel for the living archive: its tag manifests record S3
+        # versionIds, and as-of reads GET data/* with ?versionId=…. Scoped to
+        # data/* ONLY — noncurrent versions of photos etc. stay unreachable.
+        Sid    = "DataCDNVersionedRead"
+        Effect = "Allow"
+        Principal = {
+          Service = "cloudfront.amazonaws.com"
+        }
+        Action   = "s3:GetObjectVersion"
+        Resource = "${aws_s3_bucket.photos.arn}/data/*"
+        Condition = {
+          StringEquals = {
+            "AWS:SourceArn" = "arn:aws:cloudfront::202533506375:distribution/E24I4W0YAJ2A27"
           }
         }
       },

@@ -54,9 +54,9 @@ resource "aws_iam_role_policy" "github_actions" {
         Resource = aws_s3_bucket.photos.arn
       },
       {
-        Sid    = "CloudFrontInvalidate"
-        Effect = "Allow"
-        Action = "cloudfront:CreateInvalidation"
+        Sid      = "CloudFrontInvalidate"
+        Effect   = "Allow"
+        Action   = "cloudfront:CreateInvalidation"
         Resource = aws_cloudfront_distribution.photos.arn
       },
     ]
