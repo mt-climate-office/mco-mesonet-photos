@@ -18,7 +18,8 @@ The project has two independent halves.
 private S3 bucket, converts them to small WebP thumbnails, and records what it has processed
 in a manifest so it only ever fetches new files. Photos are served through CloudFront.
 
-**Explorer ← live API.** `docs/index.html` is a static single-page app (D3) hosted on GitHub
+**Explorer ← live API.** `docs/index.html` is a static single-page app (MapLibre GL JS,
+styled with [mco-web-style](https://github.com/mt-climate-office/mco-web-style)) hosted on GitHub
 Pages. It draws Montana as a grid of cells and fills each one with a station's latest photo.
 The map *geometry* is the only static piece — everything else is read live from the Mesonet
 API on each page load:
@@ -42,8 +43,11 @@ regenerating if the underlying grid definition changes.
 mco-mesonet-photos.R     Generates docs/grid.geojson (static grid geometry)
 data/                    Source grid shapefile (input to the R script)
 docs/                    The explorer — published via GitHub Pages
-  index.html             Single-page app
+  index.html             Single-page app (markup, CSP, app-specific CSS)
+  app.js                 App logic (classic script; uses window.MCO from mco-web-style)
   grid.geojson           Grid-cell geometry
+  data/                  Montana state / county / tribal boundary GeoJSON
+  assets/                Favicons + vendored MCO logo
   preview.png            Social-share image (auto-generated)
 scripts/
   mirror_photos.py       Mirror new photos → S3 (WebP + manifest)

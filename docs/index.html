@@ -2,7 +2,27 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <!-- CSP (meta form — GitHub Pages can't set headers). The sha256 pins the
+       inline anti-flash script below; recompute it if that script changes
+       (mco-web-style README § CSP). No s3.amazonaws.com: this map deliberately
+       runs without hillshade.
+       `connect-src data:` is required, not incidental: MapLibre loads an
+       `image` source's url through fetch(), and every photo in the mosaic is a
+       cover-cropped canvas data URL. Without it the whole mosaic silently
+       fails to paint. -->
+  <meta http-equiv="Content-Security-Policy" content="
+    default-src 'none';
+    script-src 'self' 'sha256-CoyZLTny4Ms0ntaZBXFoDdIGaegMzPM1QXUml5kCP4Q=' https://unpkg.com https://cdn.jsdelivr.net;
+    worker-src blob:;
+    style-src 'unsafe-inline' https://fonts.googleapis.com https://unpkg.com https://cdn.jsdelivr.net;
+    font-src https://fonts.gstatic.com;
+    img-src 'self' data: blob: https://mesonet.climate.umt.edu;
+    connect-src 'self' data: https://mesonet.climate.umt.edu https://basemaps.cartocdn.com https://*.basemaps.cartocdn.com;
+    base-uri 'none';
+    form-action 'none'">
+
+  <!-- viewport-fit=cover so env(safe-area-inset-*) resolves on notched phones. -->
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
   <title>Montana Mesonet Photo Explorer</title>
   <meta name="description" content="Browse Montana Mesonet station photos by date, time, and camera direction. A service of the Montana Climate Office.">
   <meta name="author" content="Montana Climate Office">
@@ -32,15 +52,19 @@
   <meta name="twitter:description" content="Browse Montana Mesonet station photos by date, time, and camera direction. A service of the Montana Climate Office.">
   <meta name="twitter:image"       content="https://mt-climate-office.github.io/mco-mesonet-photos/preview.png">
 
-  <!-- Prevent theme flash — URL ?theme= wins, then localStorage, then OS preference -->
+  <!-- Anti-flash theme boot (mco-web-style snippets/anti-flash.html) — inline
+       by design; validates saved values because mco-theme is shared org-wide. -->
   <script>
     (function () {
       const raw = new URLSearchParams(location.search).get('theme');
       const url = raw == null ? null : raw.toLowerCase();
-      const saved = localStorage.getItem('mco-theme');
+      let saved = null;
+      try { saved = localStorage.getItem('mco-theme'); } catch (e) {}
       const prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
-      const t = (url === 'dark' || url === 'light') ? url
-              : (saved || (prefersDark ? 'dark' : 'light'));
+      const valid = ['dark', 'light', 'high-contrast'];
+      const t = valid.includes(url) ? url
+              : valid.includes(saved) ? saved
+              : (prefersDark ? 'dark' : 'light');
       document.documentElement.setAttribute('data-theme', t);
     })();
   </script>
@@ -48,210 +72,80 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600;700&family=Space+Mono&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="https://unpkg.com/maplibre-gl@5.18.0/dist/maplibre-gl.css">
+  <link rel="stylesheet" href="https://unpkg.com/maplibre-gl@5.18.0/dist/maplibre-gl.css"
+        integrity="sha384-q7EDwLXBfakVimqzBJqFCTxpgy7B18buhebV158qkVMCEVAaUnU3fQTEfWgYz+7g"
+        crossorigin="anonymous">
+  <!-- mco-web-style: tokens (3 themes), a11y utilities, navbar/toast/tooltip/
+       modal shells, MapLibre polish. Pinned + SRI per house policy. -->
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/mt-climate-office/mco-web-style@0.3.1/theme/mco-theme.css"
+        integrity="sha384-5jJ21b51CkMNt/J34JqlFzd67/QnvLRFwJ4DgM99nRyV5LvAwpwsyWbSCCp2Mq6B"
+        crossorigin="anonymous">
 
   <style>
-    /* ── Theme tokens (shared with the Mesonet Status map) ─────────────────── */
-    :root {
-      --bg-deep:        #161b22;
-      --bg-surface:     #1e2530;
-      --bg-raised:      #2c3545;
-      --border:         #3a4558;
-      --border-glass:   rgba(255,255,255,0.08);
-      --text-primary:   #e8ecf0;
-      --text-secondary: #c0cad6;
-      --text-muted:     #8a99b0;
-      --text-dim:       #6b7a90;
-      --accent:         #1a6faf;
-      --accent-light:   #5aaee8;
-      --accent-dk:      #114f80;
-      --accent-hover:   rgba(26,111,175,0.10);
-      --brand-gradient: linear-gradient(90deg, var(--accent-dk), var(--accent), var(--accent-light), var(--accent));
-      --glass:          rgba(30,37,48,0.82);
-      --shadow:         0 4px 24px rgba(0,0,0,0.4);
-      --transition:     0.2s cubic-bezier(0.4,0,0.2,1);
-      --radius-sm:      4px;
-      --radius-md:      8px;
-      --radius-lg:      12px;
-      --input-bg:       #232a35;
-    }
-    [data-theme="light"] {
-      --bg-deep:        #f0f2f5;
-      --bg-surface:     #ffffff;
-      --bg-raised:      #e8ecf0;
-      --border:         #c8cdd5;
-      --border-glass:   rgba(0,0,0,0.08);
-      --text-primary:   #1a1a2e;
-      --text-secondary: #3a3f4b;
-      --text-muted:     #5a6070;
-      --text-dim:       #7a8190;
-      --accent:         #1a6faf;
-      --accent-light:   #1563a0;
-      --accent-dk:      #0d4f7a;
-      --accent-hover:   rgba(26,111,175,0.08);
-      --brand-gradient: linear-gradient(90deg, #0a4a7a, #1266a8, #0d7fd4, #1266a8, #0a4a7a);
-      --glass:          rgba(255,255,255,0.88);
-      --shadow:         0 4px 24px rgba(0,0,0,0.1);
-      --input-bg:       #f4f5f7;
-    }
+    /* ════════════════════════════════════════════════════════════════════
+       App-specific styles ONLY — tokens, reset, a11y utilities, navbar /
+       toast / tooltip / modal shells and MapLibre polish all come from
+       mco-web-style. Anything below is either this app's own layout or a
+       marked kit-override.
+       ════════════════════════════════════════════════════════════════════ */
 
-    /* ── MapLibre control polish (matches the Status map) ─────────────────── */
-    .maplibregl-ctrl-group {
-      background: var(--glass) !important;
-      backdrop-filter: blur(16px); -webkit-backdrop-filter: blur(16px);
-      border: 1px solid var(--border) !important;
-      border-radius: var(--radius-md) !important;
-      box-shadow: var(--shadow) !important;
-      transition: background var(--transition), border-color var(--transition);
-    }
-    .maplibregl-ctrl-group button {
-      background: transparent !important;
-      border-color: var(--border) !important;
-      transition: background var(--transition);
-    }
-    .maplibregl-ctrl-group button:hover { background: var(--accent-hover) !important; }
-    .maplibregl-ctrl-group button .maplibregl-ctrl-icon { filter: var(--ctrl-icon-filter, none); }
-    /* Custom "Zoom to full extent" button — same visual treatment as built-ins. */
-    .maplibregl-ctrl-fit .maplibregl-ctrl-icon {
-      background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23202020' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><polyline points='4 8 4 4 8 4'/><polyline points='20 8 20 4 16 4'/><polyline points='4 16 4 20 8 20'/><polyline points='20 16 20 20 16 20'/></svg>");
-      background-size: 60% 60%;
-      background-position: center;
-      background-repeat: no-repeat;
-    }
-    :root                { --ctrl-icon-filter: invert(1); }
-    [data-theme="light"] { --ctrl-icon-filter: none; }
-    .maplibregl-ctrl-attrib {
-      background: var(--glass) !important;
-      color: var(--text-muted) !important;
-    }
-    .maplibregl-ctrl-attrib a { color: var(--text-secondary) !important; }
-    .maplibregl-ctrl-attrib button.maplibregl-ctrl-attrib-button { filter: var(--ctrl-icon-filter, none); }
+    /* ── App frame (layout only — fonts/colors come from the kit) ─────────── */
+    body { height: 100dvh; display: flex; flex-direction: column; overflow: hidden; }
+    main { flex: 1; min-height: 0; }
+    /* Programmatic focus from the skip link shouldn't ring the whole page; the
+       kit's universal :focus-visible rule is untouched. */
+    main:focus { outline: none; }
 
-    /* ── Reset & base ──────────────────────────────────────────────────────── */
-    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    /* ── Map ───────────────────────────────────────────────────────────────── */
+    #map-container { height: 100%; min-height: 0; position: relative; }
+    #map { width: 100%; height: 100%; background: var(--bg-deep); }
 
-    @media (prefers-reduced-motion: reduce) {
-      *, *::before, *::after {
-        transition-duration: 0.001ms !important;
-        animation-duration:  0.001ms !important;
-        animation-iteration-count: 1 !important;
-      }
-    }
-
-    .sr-only {
-      position: absolute !important;
-      width: 1px !important; height: 1px !important;
-      padding: 0 !important; margin: -1px !important;
-      overflow: hidden !important; clip: rect(0, 0, 0, 0) !important;
-      white-space: nowrap !important; border: 0 !important;
-    }
-
-    body {
-      font-family: 'Outfit', system-ui, -apple-system, sans-serif;
-      background: var(--bg-deep);
-      color: var(--text-primary);
-      height: 100dvh;
-      display: flex; flex-direction: column;
-      overflow: hidden;
-      transition: background var(--transition), color var(--transition);
-    }
-    :focus-visible { outline: 2px solid var(--accent-light); outline-offset: 2px; }
-
-    /* ── Navbar ────────────────────────────────────────────────────────────── */
-    #navbar {
-      flex-shrink: 0;
-      position: relative;
-      display: flex; align-items: center; gap: 0.75rem;
-      padding: 0.4rem 1rem;
-      min-height: 52px;
-      background: var(--glass);
-      backdrop-filter: blur(16px); -webkit-backdrop-filter: blur(16px);
-      border-bottom: 1px solid var(--border);
-      flex-wrap: wrap; row-gap: 0.4rem;
-      z-index: 100;
-      transition: background var(--transition), border-color var(--transition);
-    }
-    #navbar::after {
-      content: ''; position: absolute; bottom: 0; left: 0; right: 0;
-      height: 2px; background: var(--brand-gradient); pointer-events: none;
-    }
-    .logo-link { display: flex; flex-shrink: 0; }
-    .logo-img  { width: 40px; height: 40px; border-radius: 6px; display: block; }
-    .nav-divider { width: 1px; height: 28px; background: var(--border); flex-shrink: 0; }
-    .brand { display: flex; flex-direction: column; justify-content: center; flex-shrink: 0; line-height: 1.2; }
-    .brand-title    { font-size: 0.65rem; font-weight: 500; letter-spacing: 0.08em; text-transform: uppercase; color: var(--text-muted); white-space: nowrap; margin: 0; }
-    .brand-subtitle { font-size: 0.55rem; font-weight: 400; letter-spacing: 0.04em; font-style: italic; color: var(--text-dim); white-space: nowrap; }
-
-    .controls { display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap; row-gap: 0.3rem; margin-right: auto; }
+    /* ── Navbar control groups (app-owned labels + inputs) ─────────────────── */
     .control-group { display: flex; align-items: center; gap: 0.3rem; }
     .control-label {
       font-size: 0.7rem; font-weight: 500; letter-spacing: 0.05em;
       text-transform: uppercase; color: var(--text-muted); white-space: nowrap;
     }
 
-    .nav-actions { display: flex; align-items: center; gap: 0.35rem; flex-shrink: 0; }
-
-    .nav-btn {
-      display: flex; align-items: center; gap: 5px;
-      padding: 6px 12px; min-height: 34px;
-      border: 1px solid var(--border); border-radius: var(--radius-md);
-      background: none; color: var(--text-secondary);
-      cursor: pointer; font-size: 0.78rem; font-weight: 500;
-      font-family: inherit; white-space: nowrap; flex-shrink: 0;
-      transition: var(--transition);
-    }
-    .nav-btn:hover { background: var(--accent-hover); border-color: var(--accent); color: var(--text-primary); }
-    .nav-btn svg { flex-shrink: 0; stroke: currentColor; }
-    .nav-btn.icon-only { padding: 0.4rem; min-width: 34px; justify-content: center; }
-    .nav-btn[aria-pressed="true"] { background: var(--accent-hover); border-color: var(--accent); color: var(--text-primary); }
-
-    #btn-info {
-      border-radius: 50%; border-color: var(--accent);
-      color: var(--accent-light); font-size: 1rem; font-weight: 600;
-      padding: 0; width: 34px; height: 34px; min-height: 0;
-      display: flex; align-items: center; justify-content: center;
-    }
-    #btn-info:hover { background: var(--accent); color: #fff; }
-
-    /* Date / time inputs */
+    /* Date / time inputs. --ctrl-border for interactive edges, --accent-line
+       for the hover/focus edge (both ≥3:1 — WCAG 1.4.11). */
     input[type="date"], select.time-select {
       background: none; color: var(--text-primary);
-      border: 1px solid var(--border); border-radius: var(--radius-md);
+      border: 1px solid var(--ctrl-border); border-radius: var(--radius-md);
       padding: 0 0.55rem; font-size: 0.78rem; font-family: inherit;
       cursor: pointer; height: 34px; line-height: 34px;
       -webkit-appearance: none; appearance: none;
       transition: var(--transition);
     }
-    input[type="date"]::-webkit-calendar-picker-indicator { filter: invert(60%); cursor: pointer; }
-    [data-theme="light"] input[type="date"]::-webkit-calendar-picker-indicator { filter: invert(30%); }
-    input[type="date"]:hover, select.time-select:hover { background: var(--accent-hover); border-color: var(--accent); }
-    input[type="date"]:focus, select.time-select:focus { border-color: var(--accent-light); background: var(--accent-hover); }
+    /* The UA calendar glyph ships dark, like the MapLibre control icons — reuse
+       the kit's icon filter so it inverts in dark AND high-contrast. */
+    input[type="date"]::-webkit-calendar-picker-indicator {
+      filter: var(--ctrl-icon-filter, none); cursor: pointer;
+    }
+    input[type="date"]:hover, select.time-select:hover { background: var(--accent-hover); border-color: var(--accent-line); }
+    input[type="date"]:focus, select.time-select:focus { border-color: var(--accent-line); background: var(--accent-hover); }
 
+    /* Date stepper: ▲/▼ stacked beside the date input (next above previous). */
     .date-stepper { display: flex; align-items: center; gap: 4px; }
-    .date-step-btns { display: flex; flex-direction: column; gap: 2px; }
+    .date-step-btns { display: flex; flex-direction: column-reverse; gap: 2px; }
     .nav-btn.date-step {
       padding: 0 4px; min-height: 0; height: 15px; min-width: 20px;
       border-radius: var(--radius-sm); justify-content: center;
     }
 
-    /* Segmented direction buttons (shared component with the Status map) */
-    .seg-btns { display: flex; gap: 0; }
-    .seg-btn {
-      padding: 4px 10px; min-height: 34px; height: 34px;
-      border-radius: 0; border-right-width: 0;
-      font-size: 0.74rem; font-weight: 600; color: var(--text-muted);
-    }
-    .seg-btn:first-child { border-radius: var(--radius-md) 0 0 var(--radius-md); }
-    .seg-btn:last-child  { border-radius: 0 var(--radius-md) var(--radius-md) 0; border-right-width: 1px; }
-    .seg-btn[aria-pressed="true"] { background: var(--accent); border-color: var(--accent-light); color: #fff; }
+    /* Narrow-screen fallback for the segmented direction group (HOUSE-STYLE §3
+       cites this pattern). One of the two is always display:none, so only one
+       reaches the accessibility tree. */
     .dir-select { display: none; }
 
-    /* ── Search input (shared with the Status map) ─────────────────────────── */
+    /* ── Search combobox (app-local: kit-deferred component) ───────────────── */
     .search-wrap { position: relative; display: inline-flex; align-items: center; }
     input[type="search"] {
+      /* Solid bg (not rgba) so it can't be visually replaced by Chrome's
+         autofill mask. */
       background-color: var(--input-bg);
       color: var(--text-primary);
-      border: 1px solid var(--border); border-radius: var(--radius-md);
+      border: 1px solid var(--ctrl-border); border-radius: var(--radius-md);
       padding: 0 12px 0 30px; height: 34px;
       width: 200px; max-width: 100%;
       font-size: 0.82rem; font-family: inherit;
@@ -259,19 +153,21 @@
       background-repeat: no-repeat; background-position: 8px center; background-size: 14px 14px;
       transition: var(--transition), width 0.18s ease-out;
     }
-    input[type="search"]:hover { border-color: var(--accent); }
-    input[type="search"]:focus { border-color: var(--accent-light); outline: none; width: 240px; }
+    input[type="search"]:hover { border-color: var(--accent-line); }
+    /* No outline:none here — the kit's universal :focus-visible ring stays. */
+    input[type="search"]:focus { border-color: var(--accent-line); width: 240px; }
     input[type="search"]::-webkit-search-cancel-button { filter: var(--ctrl-icon-filter, none); }
     input[type="search"]::placeholder { color: var(--text-muted); opacity: 1; }
 
+    /* Custom suggestions listbox — replaces the native <datalist> popup, which
+       is unstylable Chrome UI. */
     #search-dropdown {
       position: absolute; top: calc(100% + 4px); left: 0; right: 0; min-width: 100%;
       background: var(--bg-surface); border: 1px solid var(--border);
       border-radius: var(--radius-md); box-shadow: var(--shadow);
       list-style: none; margin: 0; padding: 4px;
-      max-height: 280px; overflow-y: auto; z-index: 50;
+      max-height: 280px; overflow-y: auto; z-index: var(--z-flyout);
     }
-    #search-dropdown[hidden] { display: none; }
     #search-dropdown li {
       display: flex; align-items: baseline; justify-content: space-between; gap: 8px;
       padding: 5px 8px; font-size: 0.8rem; cursor: pointer;
@@ -282,55 +178,20 @@
     #search-dropdown li.empty { color: var(--text-muted); font-style: italic; cursor: default; }
     #search-dropdown li.empty:hover { background: none; }
     #search-dropdown .search-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
-    #search-dropdown .search-meta { flex-shrink: 0; font-family: 'Space Mono', monospace; font-size: 0.68rem; color: var(--text-secondary); }
+    /* --text-secondary, not --text-muted: keeps AA headroom over the
+       accent-tinted hover background. */
+    #search-dropdown .search-meta { flex-shrink: 0; font-family: var(--font-mono); font-size: 0.68rem; color: var(--text-secondary); }
     .search-kbd {
       position: absolute; right: 6px; top: 50%; transform: translateY(-50%);
-      font: 600 0.62rem 'Space Mono', monospace;
+      font: 600 0.62rem var(--font-mono);
       background: var(--border-glass); border: 1px solid var(--border);
       border-radius: 3px; padding: 1px 5px; color: var(--text-muted);
       pointer-events: none; transition: opacity 0.15s;
     }
+    /* Hide the / hint once the user has focused the search (or while typing). */
     .search-wrap:focus-within .search-kbd { opacity: 0; }
 
-    /* ── Map ───────────────────────────────────────────────────────────────── */
-    #map-container { flex: 1; min-height: 0; position: relative; }
-    #map { width: 100%; height: 100%; background: var(--bg-deep); }
-
-    /* ── Tooltip ───────────────────────────────────────────────────────────── */
-    #tooltip {
-      position: fixed;
-      background: var(--glass);
-      border: 1px solid var(--accent-light);
-      border-radius: 5px; padding: 0.3rem 0.6rem;
-      font-size: 0.75rem; font-weight: 500; color: var(--text-primary);
-      pointer-events: none; z-index: 50; white-space: nowrap;
-      opacity: 0; transition: opacity 0.1s; backdrop-filter: blur(8px);
-    }
-    #tooltip.visible { opacity: 1; }
-
-    /* ── Toast ─────────────────────────────────────────────────────────────── */
-    #toast {
-      position: fixed; bottom: 1.5rem; left: 50%;
-      transform: translateX(-50%) translateY(0.75rem);
-      background: var(--bg-surface); border: 1px solid var(--accent-light);
-      border-radius: 6px; padding: 0.5rem 1rem;
-      font-size: 0.82rem; color: var(--text-primary);
-      opacity: 0; transition: opacity 0.2s, transform 0.2s;
-      pointer-events: none; z-index: 400; box-shadow: var(--shadow);
-    }
-    #toast.visible { opacity: 1; transform: translateX(-50%) translateY(0); }
-
-    /* ── Modal (photo gallery) ─────────────────────────────────────────────── */
-    #modal, #lightbox, #info-modal {
-      background: transparent; border: none; padding: 1rem;
-      position: fixed; inset: 0; margin: auto;
-      width: fit-content; height: fit-content;
-      max-width: calc(100vw - 2rem); max-height: calc(100dvh - 2rem);
-    }
-    #lightbox { padding: 0; }
-    #modal::backdrop, #info-modal::backdrop { background: rgba(0,0,0,0.7); backdrop-filter: blur(4px); }
-    #lightbox::backdrop { background: rgba(0,0,0,0.88); backdrop-filter: blur(6px); }
-
+    /* ── Photo gallery dialog (app-local) ──────────────────────────────────── */
     .modal-box {
       background: var(--bg-surface); border: 1px solid var(--border);
       border-radius: 10px; width: min(860px, calc(100vw - 4rem));
@@ -338,33 +199,40 @@
       box-shadow: var(--shadow);
     }
     .modal-header { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 1rem; gap: 1rem; }
-    .modal-station-name { font-size: 1.1rem; font-weight: 700; color: var(--accent-light); }
+    .modal-station-name { font-size: 1.1rem; font-weight: 700; color: var(--accent-line); }
     .modal-timestamp { font-size: 0.75rem; color: var(--text-muted); margin-top: 0.15rem; }
-    .modal-close {
-      display: flex; align-items: center; justify-content: center;
-      background: none; border: 1px solid var(--border); border-radius: 6px;
-      color: var(--text-muted); font-size: 1.2rem; cursor: pointer; line-height: 1;
-      flex-shrink: 0; min-width: 34px; min-height: 34px;
-      transition: color var(--transition), border-color var(--transition);
-    }
-    .modal-close:hover { color: var(--text-primary); border-color: var(--accent-light); }
 
     .photo-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 0.75rem; }
+    .photo-empty { font-size: 0.85rem; color: var(--text-muted); padding: 0.5rem 0; }
     .photo-card { text-align: center; }
+    /* A real button so enlarging has a keyboard twin and a focus target
+       (HOUSE-STYLE §5.8); the kit's focus ring applies to it unchanged. */
+    .photo-btn {
+      display: block; width: 100%; padding: 0; border: 0;
+      background: none; cursor: zoom-in; border-radius: 6px;
+    }
     .photo-card img {
       width: 100%; aspect-ratio: 4 / 3; object-fit: cover; border-radius: 6px;
-      background: var(--bg-deep); border: 1px solid var(--border); display: block; cursor: zoom-in;
+      background: var(--bg-deep); border: 1px solid var(--border); display: block;
     }
     .photo-dir-label { font-size: 0.7rem; color: var(--text-muted); margin-top: 0.3rem; }
     .modal-dash-link { margin-top: 1rem; text-align: center; }
     .modal-dash-link a {
-      display: inline-block; padding: 0.5rem 1.5rem; background: var(--accent);
-      color: #fff; border-radius: 6px; font-size: 0.9rem; font-weight: 600;
-      text-decoration: none; transition: background var(--transition);
+      display: inline-block; padding: 0.5rem 1.5rem;
+      background: var(--accent); color: var(--text-on-accent);
+      border-radius: 6px; font-size: 0.9rem; font-weight: 600;
+      text-decoration: none; transition: box-shadow var(--transition);
     }
-    .modal-dash-link a:hover { background: var(--accent-light); text-decoration: none; }
+    /* Hover ring rather than a lighter fill: --text-on-accent is only
+       guaranteed against --accent itself (kit contrast contract §2). */
+    .modal-dash-link a:hover { box-shadow: 0 0 0 2px var(--accent-line); }
 
-    /* ── Lightbox ──────────────────────────────────────────────────────────── */
+    /* ── Lightbox (app-local) ──────────────────────────────────────────────── */
+    /* Always a near-black backdrop in every theme, so the two colors below are
+       measured against it rather than tokenised: #ccc on rgba(0,0,0,0.88) is
+       ~12:1 and #fff is ~19:1 (WCAG 1.4.3). */
+    #lightbox { padding: 0; }
+    #lightbox::backdrop { background: rgba(0,0,0,0.88); backdrop-filter: blur(6px); }
     #lightbox-img {
       display: block; max-width: min(1200px, calc(100vw - 2rem));
       max-height: calc(100dvh - 5rem); border-radius: 6px; object-fit: contain;
@@ -375,60 +243,61 @@
       color: #fff; font-size: 1.75rem; line-height: 1; cursor: pointer; padding: 0 0.25rem;
     }
 
-    /* ── Info modal ────────────────────────────────────────────────────────── */
-    .info-modal-box {
-      background: var(--bg-surface); border: 1px solid var(--border);
-      border-radius: 10px; width: min(560px, calc(100vw - 4rem));
-      max-height: calc(100dvh - 4rem); overflow-y: auto; padding: 1.5rem; box-shadow: var(--shadow);
-    }
-    .info-modal-header { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 1.25rem; gap: 1rem; }
-    .info-modal-title { font-size: 1.05rem; font-weight: 700; color: var(--accent-light); margin: 0; }
-    .info-modal-subtitle { font-size: 0.75rem; color: var(--text-muted); margin-top: 0.2rem; }
-    .info-section { margin-bottom: 1.25rem; }
-    .info-section:last-child { margin-bottom: 0; }
-    .info-section h3 {
-      font-size: 0.8rem; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase;
-      color: var(--text-secondary); margin-bottom: 0.5rem; padding-bottom: 0.3rem; border-bottom: 1px solid var(--border);
-    }
-    .info-section p { font-size: 0.85rem; color: var(--text-secondary); line-height: 1.6; margin-bottom: 0.5rem; }
-    .info-section p:last-child { margin-bottom: 0; }
-    .info-section a { color: var(--accent-light); text-decoration: none; }
-    .info-section a:hover { text-decoration: underline; }
-    .info-section ul { margin: 0; padding-left: 1.1rem; font-size: 0.85rem; color: var(--text-secondary); line-height: 1.7; }
-    .info-section ul li { margin-bottom: 0.2rem; }
-    .info-section ul li:last-child { margin-bottom: 0; }
-    .info-section ul li strong { color: var(--text-primary); font-weight: 600; }
+    /* ── Info modal extras (shell + sections come from the kit) ────────────── */
     .info-icon { display: inline-flex; align-items: center; vertical-align: middle; margin: 0 3px 1px 0; opacity: 0.8; }
     .info-icon svg { stroke: currentColor; }
 
     /* ── Responsive ────────────────────────────────────────────────────────── */
-    @media (max-width: 1400px) { .control-label { display: none; } .btn-label { display: none; } }
+    /* Breakpoints 1400 (labels) / 1060 (chrome) / 750 (subtitle) come from the
+       kit. Below 1060 the segmented direction group doesn't fit — swap in the
+       <select>. */
     @media (max-width: 1060px) {
       #dir-group  { display: none; }
       .dir-select { display: block; }
-      #navbar     { padding-left: 0.6rem; padding-right: 0.6rem; gap: 0.4rem; }
-      .nav-actions { gap: 0.2rem; }
     }
-    @media (max-width: 750px) { .brand, .nav-divider { display: none; } }
-    @media (min-width: 641px) { #navbar { flex-wrap: nowrap; } .controls { flex-wrap: nowrap; } }
+    /* The brand block now survives to phone widths (kit default sheds only the
+       subtitle), so wrapping starts at 750 rather than 640 — below that the
+       controls take a second row instead of overflowing the bar. */
+    @media (min-width: 751px) {
+      .mco-navbar { flex-wrap: nowrap; }
+      .controls   { flex-wrap: nowrap; }
+    }
+    /* Once wrapping starts, the brand would otherwise own an entire row by
+       itself. Lift the icon buttons up beside it and give the controls their
+       own full-width row — the mesonet-status pattern, one row cheaper on a
+       phone. CSS `order` moves the visual position only; tab order is intact. */
+    @media (max-width: 750px) {
+      .nav-meta { order: 1; }
+      .controls { order: 2; flex-basis: 100%; }
+    }
     @media (max-width: 640px) {
       input[type="search"] { width: 150px; }
       input[type="search"]:focus { width: 180px; }
     }
+    /* WCAG 2.5.5 — touch targets for app-owned controls (kit covers its own). */
     @media (hover: none) {
-      .nav-btn, .seg-btn, input[type="search"] { min-height: 40px; }
-      #btn-info { width: 40px; height: 40px; }
-      .nav-btn.icon-only { min-width: 40px; }
+      input[type="search"] { min-height: 40px; }
       #search-dropdown li { min-height: 40px; padding: 10px 8px; }
+      .lightbox-close { min-width: 44px; min-height: 44px; }
+      /* Two stacked 15px buttons are untappable — lay the stepper out as a
+         pair of 40px targets (previous left, next right) instead. */
+      .date-step-btns { flex-direction: row; gap: 4px; }
+      .nav-btn.date-step {
+        min-width: 40px; min-height: 40px; height: 40px;
+        border-radius: var(--radius-md);
+      }
     }
   </style>
 </head>
 <body>
 
-<header id="navbar">
+<!-- Skip link first (WCAG 2.4.1) — mco-web-style snippets/skip-link.html -->
+<a class="mco-skip-link" href="#main">Skip to map</a>
+
+<header id="navbar" class="mco-navbar">
   <a href="https://climate.umt.edu" target="_blank" rel="noopener noreferrer"
      class="logo-link" aria-label="Montana Climate Office">
-    <img src="https://climate.umt.edu/assets/images/MCO_logo_icon_only.png" alt="" class="logo-img">
+    <img src="assets/mco-logo.png" alt="" class="logo-img" width="40" height="40">
   </a>
 
   <div class="nav-divider" aria-hidden="true"></div>
@@ -439,7 +308,8 @@
   </div>
 
   <div class="controls">
-    <!-- Search a station. Press / anywhere to jump here. -->
+    <!-- Search a station. Press / anywhere to jump here. Custom listbox
+         dropdown (not <datalist>) so the popup is fully themed. -->
     <div class="search-wrap">
       <label for="search-input" class="sr-only">Search stations</label>
       <input type="search" id="search-input"
@@ -447,6 +317,9 @@
              aria-controls="search-dropdown" aria-expanded="false"
              placeholder="Search stations…" autocomplete="off">
       <kbd class="search-kbd" aria-hidden="true">/</kbd>
+      <!-- Deliberate WAI-ARIA combobox: native <select>/<datalist> popups are
+           unstylable Chrome UI and can't be themed. -->
+      <!-- [html-validate-disable-next prefer-native-element] -->
       <ul id="search-dropdown" role="listbox" hidden></ul>
     </div>
 
@@ -455,16 +328,16 @@
       <div class="date-stepper">
         <input type="date" id="date-input">
         <div class="date-step-btns">
-          <button class="nav-btn date-step" id="btn-date-next" aria-label="Next day">
-            <svg width="10" height="10" viewBox="0 0 24 24" fill="none"
-                 stroke-width="3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-              <polyline points="18 15 12 9 6 15"/>
-            </svg>
-          </button>
-          <button class="nav-btn date-step" id="btn-date-prev" aria-label="Previous day">
+          <button type="button" class="nav-btn date-step" id="btn-date-prev" aria-label="Previous day">
             <svg width="10" height="10" viewBox="0 0 24 24" fill="none"
                  stroke-width="3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
               <polyline points="6 9 12 15 18 9"/>
+            </svg>
+          </button>
+          <button type="button" class="nav-btn date-step" id="btn-date-next" aria-label="Next day">
+            <svg width="10" height="10" viewBox="0 0 24 24" fill="none"
+                 stroke-width="3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <polyline points="18 15 12 9 6 15"/>
             </svg>
           </button>
         </div>
@@ -486,8 +359,8 @@
     <select class="time-select dir-select" id="dir-select" aria-label="Camera direction"></select>
   </div>
 
-  <div class="nav-actions">
-    <button class="nav-btn" id="btn-counties" aria-pressed="false" aria-label="Toggle county and tribal nation boundaries">
+  <div class="nav-meta">
+    <button type="button" class="nav-btn" id="btn-counties" aria-pressed="false" aria-label="Toggle county and tribal nation boundaries">
       <svg width="14" height="14" viewBox="0 0 24 24" fill="none"
            stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
         <rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/>
@@ -495,7 +368,7 @@
       </svg>
       <span class="btn-label">Boundaries</span>
     </button>
-    <button class="nav-btn" id="btn-export" aria-label="Export map as PNG">
+    <button type="button" class="nav-btn" id="btn-export" aria-label="Export map as PNG">
       <svg width="14" height="14" viewBox="0 0 24 24" fill="none"
            stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
         <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
@@ -504,7 +377,7 @@
       </svg>
       <span class="btn-label">Export</span>
     </button>
-    <button class="nav-btn" id="btn-share" aria-label="Copy shareable link">
+    <button type="button" class="nav-btn" id="btn-share" aria-label="Copy shareable link">
       <svg width="14" height="14" viewBox="0 0 24 24" fill="none"
            stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
         <circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/>
@@ -513,7 +386,8 @@
       </svg>
       <span class="btn-label">Share</span>
     </button>
-    <button class="nav-btn icon-only" id="btn-theme" title="Toggle theme" aria-label="Toggle theme">
+    <!-- aria-label maintained at runtime by MCO.initThemeToggle -->
+    <button type="button" class="nav-btn icon-only" id="btn-theme" title="Switch theme" aria-label="Switch theme">
       <svg id="icon-moon" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke-width="2"
            stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
         <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/>
@@ -529,26 +403,36 @@
         <line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/>
       </svg>
     </button>
-    <button class="nav-btn" id="btn-info" aria-label="About this explorer">?</button>
+    <button type="button" class="nav-btn mco-btn-info" id="btn-info" aria-label="About this explorer">?</button>
   </div>
 </header>
 
-<div id="map-container">
-  <div id="map" role="application"
-       aria-label="Map of Montana Mesonet weather stations. Click a station's photo to view its gallery."></div>
-</div>
+<main id="main" tabindex="-1">
+  <div id="map-container">
+    <div id="map" role="application"
+         aria-label="Map of Montana Mesonet weather stations. Click a station's photo to view its gallery."></div>
+  </div>
+</main>
 
-<div id="tooltip" role="tooltip" aria-hidden="true"></div>
-<div id="toast"  role="status" aria-live="polite"></div>
+<!-- Screen-reader table twin of the WebGL photo mosaic (HOUSE-STYLE §5.2);
+     rebuilt by app.js whenever the mosaic is. -->
+<section class="sr-only" aria-label="Station photo data">
+  <table id="sr-photo-table"></table>
+</section>
 
-<dialog id="info-modal" aria-labelledby="info-modal-title">
+<!-- Tooltip is purely visual: anchored to the cursor with no focusable trigger,
+     so it is decoration for AT. The live region created by app.js
+     (MCO.createLiveRegion) carries the same information. -->
+<div id="tooltip" class="mco-tooltip" aria-hidden="true"></div>
+
+<dialog id="info-modal" class="mco-modal" aria-labelledby="info-modal-title">
   <div class="info-modal-box">
     <div class="info-modal-header">
       <div>
         <h2 class="info-modal-title" id="info-modal-title">Montana Mesonet Photo Explorer</h2>
-        <div class="info-modal-subtitle">A service of the Montana Climate Office</div>
+        <p class="info-modal-subtitle">A service of the Montana Climate Office</p>
       </div>
-      <button class="modal-close" id="info-modal-close" aria-label="Close">&times;</button>
+      <button type="button" class="modal-close" id="info-modal-close" aria-label="Close" data-close-modal>&times;</button>
     </div>
 
     <div class="info-section">
@@ -560,10 +444,10 @@
     <div class="info-section">
       <h3>Using the Photo Explorer</h3>
       <ul>
-        <li><strong>Date &amp; Time</strong> — Browse any date and hour; use ▲▼ to step day by day.</li>
+        <li><strong>Date &amp; Time</strong> — Browse any date and hour; use ▲▼ to step day by day. All times are Mountain Time.</li>
         <li><strong>Direction</strong> — Pick a camera angle to show that view across all stations at once.</li>
-        <li><strong>Search</strong> — Press <kbd>/</kbd> to jump to the search box and fly to any station.</li>
-        <li><strong>Click a station</strong> — Open a photo gallery for that station; click any photo to enlarge.</li>
+        <li><strong>Search</strong> — Press <kbd>/</kbd> to jump to the search box, then <kbd>↑</kbd>/<kbd>↓</kbd> + <kbd>Enter</kbd> to fly to a station and open its gallery.</li>
+        <li><strong>Click a station</strong> — Open a photo gallery for that station; click or press <kbd>Enter</kbd> on any photo to enlarge it.</li>
         <li><strong>Zoom &amp; pan</strong> — Scroll or pinch to zoom, drag to pan; use the +/− and full-extent buttons at top-right.</li>
         <li>
           <span class="info-icon"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/></svg></span>
@@ -575,8 +459,9 @@
         </li>
         <li>
           <span class="info-icon"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/></svg></span>
-          <strong>Share</strong> — Copy a shareable link to your clipboard.
+          <strong>Share</strong> — Copy a shareable link to your clipboard. The URL reflects every choice.
         </li>
+        <li>Single-key shortcuts can be disabled by adding <code>?kbd=off</code> to the URL (it sticks while you browse).</li>
       </ul>
     </div>
 
@@ -587,1087 +472,42 @@
   </div>
 </dialog>
 
-<dialog id="modal" aria-labelledby="modal-station-name">
+<dialog id="modal" class="mco-modal" aria-labelledby="modal-station-name">
   <div class="modal-box">
     <div class="modal-header">
       <div>
+        <!-- Filled at open time; a div rather than a heading because an empty
+             heading is invalid markup — the dialog is named via
+             aria-labelledby regardless. -->
         <div class="modal-station-name" id="modal-station-name"></div>
         <div class="modal-timestamp"    id="modal-timestamp"></div>
       </div>
-      <button class="modal-close" id="modal-close" aria-label="Close">&times;</button>
+      <button type="button" class="modal-close" id="modal-close" aria-label="Close">&times;</button>
     </div>
     <div class="photo-grid"    id="photo-grid"></div>
     <div class="modal-dash-link" id="modal-dash-link"></div>
   </div>
 </dialog>
 
-<dialog id="lightbox" aria-label="Full-size station photo">
-  <button class="lightbox-close" id="lightbox-close" aria-label="Close">&times;</button>
-  <img id="lightbox-img" src="" alt="">
+<dialog id="lightbox" class="mco-modal" aria-label="Full-size station photo">
+  <button type="button" class="lightbox-close" id="lightbox-close" aria-label="Close">&times;</button>
+  <!-- 1×1 transparent placeholder: src="" would re-request the page itself. -->
+  <img id="lightbox-img" alt=""
+       src="data:image/gif;base64,R0lGODlhAQABAAAAACH5BAEKAAEALAAAAAABAAEAAAICTAEAOw==">
   <div class="lightbox-caption" id="lightbox-caption"></div>
 </dialog>
 
 <!-- MapLibre -->
-<script src="https://unpkg.com/maplibre-gl@5.18.0/dist/maplibre-gl.js"></script>
-
-<script type="module">
-'use strict';
-
-// ── Constants ─────────────────────────────────────────────────────────────────
-const CLOUDFRONT_BASE = "https://mesonet.climate.umt.edu/data";        // processed WebP + raw JPG photos
-const PHOTOS_META     = "https://mesonet.climate.umt.edu/api/v2/photos?type=json";
-const STATIONS_META   = "https://mesonet.climate.umt.edu/api/stations?type=json";
-const STATUS_META     = "https://mesonet.climate.umt.edu/api/stations/status?type=json";
-const GRID_URL        = "grid.geojson";
-const DASH_URL        = (s) => `https://mesonet.climate.umt.edu/dash/${s}`;
-
-const DIR_ORDER  = ["N", "S", "E", "W", "SNOW", "NS", "SS"];
-const DIR_LABELS = { N: "North", S: "South", E: "East", W: "West", SNOW: "Snow", NS: "North Sky", SS: "South Sky" };
-
-// Initial fit (padded around Montana's extent). Snap-back on zoom-out reuses these.
-const MT_FIT_BOUNDS = [[-116.10, 44.30], [-104.00, 49.05]];   // [SW, NE]
-const FIT_OPTS      = { padding: 24, animate: false };
-
-const SEARCH_FLY_ZOOM   = 8.5;
-const SEARCH_FLY_SPEED  = 1.4;
-const SEARCH_MAX_RESULTS = 8;
-
-// Fixed export layout dimensions (Montana framing / Playwright viewport). The PNG
-// is rendered at EXPORT_SCALE× these for a crisp, high-resolution image.
-const EXPORT_W = 1400, EXPORT_H = 700;
-const EXPORT_SCALE = 2;   // → 2800×1400 output, independent of the device's DPR
-// Photos are cover-cropped to a centered square before being warped into their
-// (near-square) grid cell, reproducing the D3 map's `xMidYMid slice` fit.
-const CROP_SIZE = 320;
-const BLANK_IMG = 'data:image/gif;base64,R0lGODlhAQABAAAAACH5BAEKAAEALAAAAAABAAEAAAICTAEAOw==';
-
-const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
-const cssVar = (n) => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
-const once   = (m, ev) => new Promise((r) => m.once(ev, r));
-const _pad   = (n, w = 2) => String(n).padStart(w, "0");
-
-// ── DOM refs ────────────────────────────────────────────────────────────────
-const dateInput      = document.getElementById("date-input");
-const timeInput      = document.getElementById("time-input");
-const tooltipEl      = document.getElementById("tooltip");
-const searchInput    = document.getElementById("search-input");
-const searchDropdown = document.getElementById("search-dropdown");
-const infoModal      = document.getElementById("info-modal");
-const modal          = document.getElementById("modal");
-const lightbox       = document.getElementById("lightbox");
-
-// ── State ─────────────────────────────────────────────────────────────────────
-let stationDirs = {};                 // stationId → { dirCode: "YYYY-MM-DD" photo start date }
-let currentDir;
-let showCounties;
-let map;
-let _activeFeatures = [];             // [{ station, name, coords:[4×[lng,lat]], centroid, id }]
-let _featureByStation = new Map();
-let _cellsFC = null;                  // GeoJSON FeatureCollection for the 'cells' source (numeric ids)
-let _stationsList = [];               // search index: [{ station, name }]
-let _tribalFC = null, _stateFC = null, _countiesFC = null;
-let _mapReady = false, _fitZoom;
-let _selectedStation = null;
-let _refreshToken = 0;                // guards against stale async photo loads on rapid date-stepping
-let _hoveredId = null;
-const _cropCache = new Map();         // photoUrl → cover-cropped data URL
-
-// ── URL state ─────────────────────────────────────────────────────────────────
-const urlParams = new URLSearchParams(location.search);
-const getLower  = (k) => { const v = urlParams.get(k); return v == null ? null : v.toLowerCase(); };
-
-const _initLng    = parseFloat(urlParams.get('lng'));
-const _initLat    = parseFloat(urlParams.get('lat'));
-const _initZoom   = parseFloat(urlParams.get('zoom'));
-const _hasInitPos = [_initLng, _initLat, _initZoom].every(Number.isFinite);
-const _initStation = getLower('station');
-
-// Headless export: ?export=light|dark forces the theme before the map is built.
-const _exportParam = urlParams.get('export');
-if (_exportParam === 'light' || _exportParam === 'dark') {
-  document.documentElement.dataset.theme = _exportParam;
-}
-
-// ── Toast ─────────────────────────────────────────────────────────────────────
-let _toastTimer;
-function showToast(msg, ms = 2200) {
-  const el = document.getElementById("toast");
-  el.textContent = msg;
-  el.classList.add("visible");
-  clearTimeout(_toastTimer);
-  _toastTimer = setTimeout(() => el.classList.remove("visible"), ms);
-}
-function lsSet(key, value) { try { localStorage.setItem(key, value); } catch {} }
-
-// ── Time helpers (Mountain Time) ──────────────────────────────────────────────
-function mtParts(date, includeTime = false) {
-  const opts = { timeZone: "America/Denver", year: "numeric", month: "2-digit", day: "2-digit" };
-  if (includeTime) { opts.hour = "2-digit"; opts.minute = "2-digit"; opts.hour12 = false; }
-  return Object.fromEntries(
-    new Intl.DateTimeFormat("en-CA", opts).formatToParts(date)
-      .filter(({ type }) => type !== "literal")
-      .map(({ type, value }) => [type, value])
-  );
-}
-// Latest available photo timestep in MT, lagged so photos have been processed.
-function computeMaxTimestep(lagMinutes = 30) {
-  const now    = new Date();
-  const p      = mtParts(now, true);
-  const thresh = (parseInt(p.hour) % 24) * 60 + parseInt(p.minute) - lagMinutes;
-  const times  = [...timeInput.options].map(o => o.value);
-  const today  = `${p.year}-${p.month}-${p.day}`;
-  for (let i = times.length - 1; i >= 0; i--) {
-    const [h, m] = times[i].split(":");
-    if (+h * 60 + +m <= thresh) return { date: today, time: times[i] };
-  }
-  const yp = mtParts(new Date(now.getTime() - 864e5));
-  return { date: `${yp.year}-${yp.month}-${yp.day}`, time: times[times.length - 1] };
-}
-
-function getSelectedDateTime() { return `${dateInput.value}T${timeInput.value}`; }
-// Photo filenames zero out minutes+seconds: "2026-03-21T09:00:00" → "2026-03-21T090000".
-function photoUrl(station, dtStr, direction) {
-  return `${CLOUDFRONT_BASE}/photos/web/${station}/${dtStr.slice(0, 13)}0000_${direction}.webp`;
-}
-function rawPhotoUrl(station, dtStr, direction) {
-  return `${CLOUDFRONT_BASE}/photos/raw/${station}/${dtStr.slice(0, 13)}0000_${direction}.jpg`;
-}
-function formatDisplayTimestamp(dtStr) {
-  const [date, time] = dtStr.split("T");
-  const [h, m] = time.split(":");
-  const hour = parseInt(h);
-  return `${date} ${hour % 12 || 12}:${m} ${hour >= 12 ? "PM" : "AM"}`;
-}
-// True when the station has the given direction AND dateStr ≥ its photo start date.
-function isValidForDate(station, dir, dateStr) {
-  const dirs = stationDirs[station];
-  if (!dirs || !(dir in dirs)) return false;
-  return dateStr >= dirs[dir];
-}
-
-// ── Date / direction initial values (URL wins) ────────────────────────────────
-const _maxTs = computeMaxTimestep();
-const { year: _y, month: _mo, day: _d } = mtParts(new Date());
-dateInput.max   = `${_y}-${_mo}-${_d}`;
-dateInput.value = urlParams.get("date") || _maxTs.date;
-const _timeParam = urlParams.get("time");
-timeInput.value  = _timeParam
-  ? (_timeParam.includes(":") ? _timeParam : `${String(_timeParam).padStart(2, "0")}:00:00`)
-  : _maxTs.time;
-currentDir = (urlParams.get("dir") || "N").toUpperCase();
-showCounties = urlParams.has("overlay")
-  ? urlParams.get("overlay").toLowerCase() === "counties"
-  : localStorage.getItem("mco-photos-counties") === "1";
-
-// ── Grid-cell join helpers ────────────────────────────────────────────────────
-// Normalise a grid-cell ID ("C-07" ↔ "C-7") so the API `ace_grid` matches grid.geojson.
-function normCell(c) {
-  const m = /^([A-Za-z]+)-0*(\d+)$/.exec((c || "").trim());
-  return m ? `${m[1].toUpperCase()}-${+m[2]}` : (c || "").trim();
-}
-// Ray-casting point-in-polygon over a GeoJSON polygon's outer ring (lon/lat).
-function pointInPolygon(pt, geom) {
-  const ring = geom.coordinates[0];
-  const [x, y] = pt;
-  let inside = false;
-  for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
-    const [xi, yi] = ring[i], [xj, yj] = ring[j];
-    if (((yi > y) !== (yj > y)) && (x < (xj - xi) * (y - yi) / (yj - yi) + xi)) inside = !inside;
-  }
-  return inside;
-}
-function quadCentroid(coords) {
-  let x = 0, y = 0;
-  for (const [lng, lat] of coords) { x += lng; y += lat; }
-  return [x / coords.length, y / coords.length];
-}
-
-// ── Theme ─────────────────────────────────────────────────────────────────────
-function basemapStyleUrl() {
-  const variant = document.documentElement.dataset.theme === 'dark'
-    ? 'dark-matter-gl-style' : 'positron-gl-style';
-  return `https://basemaps.cartocdn.com/gl/${variant}/style.json`;
-}
-function syncThemeIcons() {
-  const dark = document.documentElement.dataset.theme !== 'light';
-  document.getElementById('icon-moon').style.display = dark ? 'none' : '';
-  document.getElementById('icon-sun') .style.display = dark ? ''     : 'none';
-}
-syncThemeIcons();
-
-document.getElementById('btn-theme').addEventListener('click', () => {
-  const next = document.documentElement.dataset.theme === 'dark' ? 'light' : 'dark';
-  document.documentElement.dataset.theme = next;
-  lsSet('mco-theme', next);
-  syncThemeIcons();
-  // setStyle() wipes our sources/layers — re-add them once the new basemap loads.
-  map.setStyle(basemapStyleUrl());
-  map.once('style.load', () => { addCustomLayers(); });
-  updateUrl();
-});
-
-// ── Paint generators (theme-aware; shared look with the Status map) ────────────
-function tribalFillPaint() {
-  // Slightly stronger than on the Status map: here the fill lands over the photo
-  // mosaic (not a neutral basemap), so it needs a touch more presence to read.
-  const dark = document.documentElement.dataset.theme !== 'light';
-  return { 'fill-color': dark ? '#b88a5e' : '#9b6b3e', 'fill-opacity': dark ? 0.25 : 0.18 };
-}
-function tribalLinePaint() {
-  const dark = document.documentElement.dataset.theme !== 'light';
-  return { 'line-color': dark ? '#d6a06f' : '#7a4f24', 'line-width': 1, 'line-opacity': dark ? 0.65 : 0.55 };
-}
-function tribalLabelPaint() {
-  const dark = document.documentElement.dataset.theme !== 'light';
-  return {
-    'text-color':      dark ? '#d6a06f' : '#6a4520',
-    'text-halo-color': dark ? '#161b22' : '#ffffff',
-    'text-halo-width': 1.4, 'text-halo-blur': 0.3,
-  };
-}
-function stateLinePaint() {
-  // Match the Status map: a neutral boundary (near-white on dark, near-black on
-  // light) rather than the accent blue.
-  const dark = document.documentElement.dataset.theme !== 'light';
-  return { 'line-color': dark ? '#e8ecf0' : '#1a1a2e', 'line-width': 2, 'line-opacity': 0.55 };
-}
-function countiesLinePaint() {
-  return { 'line-color': cssVar('--text-muted'), 'line-width': 0.6, 'line-opacity': 0.5 };
-}
-const TRIBAL_LABEL_LAYOUT = {
-  'text-field': ['match', ['get', 'NAME'],
-    'Blackfeet Indian Reservation',         'Blackfeet',
-    'Crow Reservation',                     'Crow',
-    'Flathead Reservation',                 'Flathead',
-    'Fort Belknap Reservation',             'Fort Belknap',
-    'Fort Peck Indian Reservation',         'Fort Peck',
-    'Northern Cheyenne Indian Reservation', 'Northern Cheyenne',
-    "Rocky Boy's Reservation",              "Rocky Boy's",
-    ['get', 'NAME'],
-  ],
-  'text-font': ['Open Sans Semibold', 'Arial Unicode MS Bold'],
-  'text-size': ['interpolate', ['linear'], ['zoom'], 7, 10, 10, 13, 13, 16],
-  'text-letter-spacing': 0.05, 'text-max-width': 8, 'text-padding': 2,
-  'text-allow-overlap': false, 'symbol-placement': 'point',
-};
-
-// ── Map init ──────────────────────────────────────────────────────────────────
-map = new maplibregl.Map({
-  container: 'map',
-  style: basemapStyleUrl(),
-  ...(_hasInitPos
-    ? { center: [_initLng, _initLat], zoom: _initZoom }
-    : { bounds: MT_FIT_BOUNDS, fitBoundsOptions: FIT_OPTS }),
-});
-map.addControl(new maplibregl.NavigationControl({ showCompass: false }), 'top-right');
-
-// "Zoom to full extent" button appended into the zoom control group.
-(function addFitToExtentButton() {
-  const navGroup = document.querySelector('.maplibregl-ctrl-top-right .maplibregl-ctrl-group');
-  if (!navGroup) return;
-  const btn = document.createElement('button');
-  btn.type = 'button';
-  btn.className = 'maplibregl-ctrl-fit';
-  btn.title = 'Zoom to full extent';
-  btn.setAttribute('aria-label', 'Zoom to full extent');
-  btn.innerHTML = `<span class="maplibregl-ctrl-icon" aria-hidden="true"></span>`;
-  btn.addEventListener('click', () => map.fitBounds(MT_FIT_BOUNDS, { ...FIT_OPTS, animate: !reduceMotion }));
-  navGroup.appendChild(btn);
-})();
-
-map.on('load', async () => {
-  await loadData();
-  addCustomLayers();
-  _fitZoom = map.cameraForBounds(MT_FIT_BOUNDS, FIT_OPTS).zoom;
-  _mapReady = true;
-
-  // Deep-link to ?station=… , else publish a clean initial URL.
-  if (_initStation && _featureByStation.has(_initStation)) {
-    if (_hasInitPos) openModalByStation(_initStation);
-    else             flyToAndOpen(_initStation);
-  } else {
-    updateUrl();
-  }
-  // Headless export hook (Playwright drives ?export=…).
-  if (_exportParam) setTimeout(() => document.getElementById('btn-export').click(), 4000);
-});
-
-// Snap back to the Montana extent when the user zooms/shrinks below the fit zoom.
-map.on('zoomend', () => {
-  if (_mapReady && _fitZoom !== undefined && map.getZoom() < _fitZoom) {
-    map.fitBounds(MT_FIT_BOUNDS, { ...FIT_OPTS, animate: !reduceMotion });
-  }
-});
-let _resizeTimer = null;
-map.on('resize', () => {
-  if (!_mapReady) return;
-  clearTimeout(_resizeTimer);
-  _resizeTimer = setTimeout(() => {
-    _resizeTimer = null;
-    _fitZoom = map.cameraForBounds(MT_FIT_BOUNDS, FIT_OPTS).zoom;
-    if (map.getZoom() < _fitZoom) map.fitBounds(MT_FIT_BOUNDS, { ...FIT_OPTS, animate: !reduceMotion });
-  }, 200);
-});
-map.on('moveend', () => { if (_mapReady) updateUrl(); });
-
-// ── Data load ─────────────────────────────────────────────────────────────────
-async function loadData() {
-  let grid, allStations, statusRows, photosMeta;
-  try {
-    [grid, allStations, statusRows, photosMeta] = await Promise.all([
-      fetch(GRID_URL).then(r => r.json()),
-      fetch(STATIONS_META).then(r => r.json()),
-      fetch(STATUS_META).then(r => r.json()),
-      fetch(PHOTOS_META).then(r => r.json()),
-    ]);
-  } catch {
-    showToast("Failed to load map data. Please refresh.", 6000);
-    return;
-  }
-
-  // stationDirs[id] = { dirCode: "YYYY-MM-DD" start date } — all directions share one start date.
-  photosMeta.forEach(entry => {
-    const id = entry["Station ID"];
-    const startDate = entry["Photo Start Date"] || "2000-01-01";
-    stationDirs[id] = {};
-    entry["Photo Directions"].forEach(s => { stationDirs[id][s.split(" ")[0].toUpperCase()] = startDate; });
-  });
-
-  // Assemble the live station set: active HydroMet stations that have photos,
-  // each placed at its assigned grid cell (ace_grid) or the cell containing it.
-  const cellByCode      = new Map(grid.features.map(f => [normCell(f.properties.cell), f]));
-  const statusByStation = new Map(statusRows.map(r => [r.station, r]));
-  const feats = [], cellFeats = [];
-  let idc = 0;
-
-  allStations.filter(s => s.sub_network === "HydroMet").forEach(s => {
-    const st = statusByStation.get(s.station);
-    if (!st || st.status !== "active") return;
-    if (!(s.station in stationDirs))   return;
-    let cell = st.ace_grid ? cellByCode.get(normCell(st.ace_grid)) : null;
-    if (!cell) cell = grid.features.find(f => pointInPolygon([s.longitude, s.latitude], f.geometry));
-    if (!cell) return;
-    const ring   = cell.geometry.coordinates[0];             // [NW, NE, SE, SW, close]
-    const coords = [ring[0], ring[1], ring[2], ring[3]];     // image-source: [TL, TR, BR, BL]
-    const id = idc++;
-    feats.push({ station: s.station, name: s.name || s.station, coords, centroid: quadCentroid(coords), id });
-    cellFeats.push({ type: "Feature", id, geometry: cell.geometry,
-                     properties: { station: s.station, name: s.name || s.station } });
-  });
-
-  _activeFeatures   = feats;
-  _featureByStation = new Map(feats.map(f => [f.station, f]));
-  _cellsFC          = { type: "FeatureCollection", features: cellFeats };
-  _stationsList     = feats.map(f => ({ station: f.station, name: f.name }))
-                          .sort((a, b) => a.name.localeCompare(b.name));
-
-  // Constrain the date picker to the network's first-camera date; build direction UI.
-  const minDate = photosMeta.map(e => e["Photo Start Date"]).filter(Boolean).sort()[0];
-  if (minDate) { dateInput.min = minDate; clampDate(); }
-
-  const allDirs = DIR_ORDER.filter(d => Object.values(stationDirs).some(dirs => d in dirs));
-  if (!allDirs.includes(currentDir)) currentDir = allDirs.includes("N") ? "N" : allDirs[0];
-  buildDirectionControls(allDirs);
-  populateSearch();
-}
-
-// ── Direction controls (segmented buttons + narrow-screen <select>) ───────────
-function buildDirectionControls(allDirs) {
-  const dirBtnsEl   = document.getElementById("dir-btns");
-  const dirSelectEl = document.getElementById("dir-select");
-  dirBtnsEl.innerHTML = "";
-  dirSelectEl.innerHTML = "";
-  allDirs.forEach(dir => {
-    const btn = document.createElement("button");
-    btn.className = "nav-btn seg-btn";
-    btn.dataset.dir = dir;
-    btn.textContent = dir === "SNOW" ? "Snow" : dir;
-    btn.setAttribute("aria-pressed", dir === currentDir ? "true" : "false");
-    dirBtnsEl.append(btn);
-
-    const opt = document.createElement("option");
-    opt.value = dir;
-    opt.textContent = DIR_LABELS[dir] || dir;
-    opt.selected = dir === currentDir;
-    dirSelectEl.append(opt);
-  });
-}
-function setDirection(dir) {
-  currentDir = dir;
-  document.querySelectorAll("#dir-btns .seg-btn").forEach(b =>
-    b.setAttribute("aria-pressed", b.dataset.dir === currentDir ? "true" : "false"));
-  const ds = document.getElementById("dir-select");
-  if (ds) ds.value = currentDir;
-  updateUrl();
-  refreshMapImages();
-}
-document.getElementById("dir-btns").addEventListener("click", (e) => {
-  const btn = e.target.closest(".seg-btn");
-  if (btn) setDirection(btn.dataset.dir);
-});
-document.getElementById("dir-select").addEventListener("change", (e) => setDirection(e.target.value));
-
-// ── Layers ────────────────────────────────────────────────────────────────────
-function addLayerOnce(cfg) { if (!map.getLayer(cfg.id)) map.addLayer(cfg); }
-
-async function preloadOverlay(sourceId, url, save) {
-  try {
-    const res = await fetch(url);
-    if (!res.ok) return;
-    const fc = await res.json();
-    save(fc);
-    const src = map.getSource(sourceId);
-    if (src) src.setData(fc);
-  } catch { /* overlays are decorative — silent failure is fine */ }
-}
-function addOverlaySource(id, url, cachedFC, save) {
-  if (!map.getSource(id)) map.addSource(id, { type: 'geojson', data: cachedFC || url });
-  if (!cachedFC) preloadOverlay(id, url, save);
-}
-
-// Add all custom sources + layers. Called on first load and re-called on every
-// setStyle() (theme toggle), which wipes them. Stack, bottom → top:
-// overlays → photo rasters → cell borders/hit → reservation labels.
-function addCustomLayers() {
-  addOverlaySource('tribal',   'data/mt_reservations_simple.geojson', _tribalFC,   fc => _tribalFC   = fc);
-  addOverlaySource('state',    'data/mt_state_simple.geojson',        _stateFC,    fc => _stateFC    = fc);
-  addOverlaySource('counties', 'data/mt_counties_simple.geojson',     _countiesFC, fc => _countiesFC = fc);
-
-  // Montana boundary frame — sits below the photos, so it reads around the
-  // edges of the mosaic. Always visible (not part of the boundaries toggle).
-  addLayerOnce({ id: 'state-line', type: 'line', source: 'state',
-                 layout: { 'line-join': 'round', 'line-cap': 'round' }, paint: stateLinePaint() });
-
-  if (!map.getSource('cells')) map.addSource('cells', { type: 'geojson', data: _cellsFC });
-
-  // One image source + raster layer per station cell. URLs are filled in by
-  // refreshMapImages(); layers start hidden until their photo loads.
-  for (const f of _activeFeatures) {
-    const lid = 'photo-' + f.station;
-    if (!map.getSource(lid)) map.addSource(lid, { type: 'image', url: BLANK_IMG, coordinates: f.coords });
-    addLayerOnce({ id: lid, type: 'raster', source: lid,
-                   layout: { visibility: 'none' },
-                   paint: { 'raster-fade-duration': 0, 'raster-resampling': 'linear' } });
-  }
-
-  // Boundary overlays sit ABOVE the photos so they lightly overlay the mosaic.
-  // County lines + tribal fill/line/labels are toggled together by the
-  // "Boundaries" button (default off).
-  const overlayVis = showCounties ? 'visible' : 'none';
-  addLayerOnce({ id: 'counties-line', type: 'line', source: 'counties',
-                 layout: { visibility: overlayVis }, paint: countiesLinePaint() });
-  addLayerOnce({ id: 'tribal-fill', type: 'fill', source: 'tribal',
-                 layout: { visibility: overlayVis }, paint: tribalFillPaint() });
-  addLayerOnce({ id: 'tribal-line', type: 'line', source: 'tribal',
-                 layout: { visibility: overlayVis }, paint: tribalLinePaint() });
-
-  addLayerOnce({ id: 'cells-outline', type: 'line', source: 'cells',
-                 paint: { 'line-color': cssVar('--border'), 'line-width': 0.8, 'line-opacity': 0.9 } });
-  // Transparent fill on top for hit-testing + hover highlight (feature-state).
-  addLayerOnce({ id: 'cells-fill', type: 'fill', source: 'cells',
-                 paint: { 'fill-color': cssVar('--accent-light'),
-                          'fill-opacity': ['case', ['boolean', ['feature-state', 'hover'], false], 0.32, 0] } });
-
-  // Reservation labels on top, toggled with the rest of the boundary overlays.
-  addLayerOnce({ id: 'tribal-label', type: 'symbol', source: 'tribal', minzoom: 6,
-                 layout: { ...TRIBAL_LABEL_LAYOUT, visibility: overlayVis }, paint: tribalLabelPaint() });
-
-  refreshMapImages();
-}
-
-// Cover-crop a loaded image to a centered square, returned as a data URL.
-function coverCropToDataURL(img, size) {
-  const c = document.createElement('canvas');
-  c.width = size; c.height = size;
-  const ctx = c.getContext('2d');
-  const s  = Math.min(img.naturalWidth, img.naturalHeight);
-  const sx = (img.naturalWidth  - s) / 2;
-  const sy = (img.naturalHeight - s) / 2;
-  ctx.drawImage(img, sx, sy, s, s, 0, 0, size, size);
-  return c.toDataURL('image/jpeg', 0.9);
-}
-function cacheCrop(url, dataUrl) {
-  _cropCache.set(url, dataUrl);
-  if (_cropCache.size > 500) _cropCache.delete(_cropCache.keys().next().value);
-}
-// Load + crop a photo, resolving to its data URL (or null on 404). Caches result.
-function loadCrop(url) {
-  const cached = _cropCache.get(url);
-  if (cached) return Promise.resolve(cached);
-  return new Promise((resolve) => {
-    const img = new Image();
-    img.crossOrigin = 'anonymous';
-    img.onload  = () => { try { const d = coverCropToDataURL(img, CROP_SIZE); cacheCrop(url, d); resolve(d); }
-                          catch { resolve(null); } };
-    img.onerror = () => resolve(null);
-    img.src = url;
-  });
-}
-
-// Point every cell's photo at the current date/time/direction. Cells valid for
-// the date get their outline + click target; missing individual photos hide the
-// raster but keep the (empty, still-clickable) cell — mirroring the D3 map.
-function refreshMapImages() {
-  if (!map.getLayer('cells-fill')) return;
-  const dt = getSelectedDateTime();
-  const dateStr = dateInput.value;
-  const token = ++_refreshToken;
-
-  const valid = _activeFeatures.filter(f => isValidForDate(f.station, currentDir, dateStr)).map(f => f.station);
-  const validSet = new Set(valid);
-  const filt = ['in', ['get', 'station'], ['literal', valid]];
-  map.setFilter('cells-outline', filt);
-  map.setFilter('cells-fill', filt);
-
-  for (const f of _activeFeatures) {
-    const lid = 'photo-' + f.station;
-    if (!map.getLayer(lid)) continue;
-    if (!validSet.has(f.station)) { map.setLayoutProperty(lid, 'visibility', 'none'); continue; }
-    const url = photoUrl(f.station, dt, currentDir);
-    loadCrop(url).then((dataUrl) => {
-      if (token !== _refreshToken || !map.getLayer(lid)) return;   // superseded by a newer refresh
-      if (dataUrl) {
-        map.getSource(lid)?.updateImage({ url: dataUrl });
-        map.setLayoutProperty(lid, 'visibility', 'visible');
-      } else {
-        map.setLayoutProperty(lid, 'visibility', 'none');
-      }
-    });
-  }
-}
-
-// ── Hover + click interaction ─────────────────────────────────────────────────
-function clearHover() {
-  map.getCanvas().style.cursor = '';
-  if (_hoveredId !== null) { map.setFeatureState({ source: 'cells', id: _hoveredId }, { hover: false }); _hoveredId = null; }
-  hideTooltip();
-}
-map.on('mousemove', (e) => {
-  const feats = map.getLayer('cells-fill') ? map.queryRenderedFeatures(e.point, { layers: ['cells-fill'] }) : [];
-  const f = feats[0] || null;
-  if (f) {
-    map.getCanvas().style.cursor = 'pointer';
-    if (_hoveredId !== null && _hoveredId !== f.id) map.setFeatureState({ source: 'cells', id: _hoveredId }, { hover: false });
-    _hoveredId = f.id;
-    map.setFeatureState({ source: 'cells', id: _hoveredId }, { hover: true });
-    showTooltip(e.originalEvent, f.properties.name);
-  } else if (_hoveredId !== null) {
-    clearHover();
-  }
-});
-map.getCanvas().addEventListener('mouseleave', clearHover);
-
-map.on('click', (e) => {
-  const feats = map.getLayer('cells-fill') ? map.queryRenderedFeatures(e.point, { layers: ['cells-fill'] }) : [];
-  if (feats.length) openModalByStation(feats[0].properties.station);
-});
-
-function showTooltip(ev, text) {
-  tooltipEl.textContent = text;
-  tooltipEl.classList.add("visible");
-  tooltipEl.style.left = `${ev.clientX + 14}px`;
-  tooltipEl.style.top  = `${ev.clientY + 14}px`;
-}
-function hideTooltip() { tooltipEl.classList.remove("visible"); }
-
-// ── Search ────────────────────────────────────────────────────────────────────
-let _activeSearchIndex = -1;
-function populateSearch() { /* index is _stationsList, already sorted by name */ }
-
-function matchScore(s, q) {
-  const n = s.name.toLowerCase(), id = s.station.toLowerCase();
-  if (n === q || id === q) return 0;
-  if (n.startsWith(q))     return 1;
-  if (id.startsWith(q))    return 2;
-  if (n.includes(q))       return 3;
-  if (id.includes(q))      return 4;
-  return Infinity;
-}
-function showSearchDropdown(rawQuery) {
-  const q = rawQuery.trim().toLowerCase();
-  if (!q) { hideSearchDropdown(); return; }
-  const matches = _stationsList
-    .map(s => ({ s, score: matchScore(s, q) }))
-    .filter(m => m.score < Infinity)
-    .sort((a, b) => a.score - b.score || a.s.name.localeCompare(b.s.name))
-    .slice(0, SEARCH_MAX_RESULTS)
-    .map(m => m.s);
-  searchDropdown.innerHTML = '';
-  if (matches.length === 0) {
-    const li = document.createElement('li');
-    li.className = 'empty';
-    li.setAttribute('aria-disabled', 'true');
-    li.textContent = `No stations match "${rawQuery.trim()}"`;
-    searchDropdown.appendChild(li);
-    searchDropdown.hidden = false;
-    searchInput.setAttribute('aria-expanded', 'true');
-    _activeSearchIndex = -1;
-    return;
-  }
-  for (const s of matches) {
-    const li = document.createElement('li');
-    li.setAttribute('role', 'option');
-    li.dataset.stationId = s.station;
-    li.id = `search-opt-${s.station}`;
-    const name = document.createElement('span');
-    name.className = 'search-name';
-    name.textContent = s.name;
-    const meta = document.createElement('span');
-    meta.className = 'search-meta';
-    meta.textContent = s.station;
-    li.append(name, meta);
-    li.addEventListener('mousedown', (e) => { e.preventDefault(); selectStation(s.station); });
-    searchDropdown.appendChild(li);
-  }
-  searchDropdown.hidden = false;
-  searchInput.setAttribute('aria-expanded', 'true');
-  _activeSearchIndex = -1;
-  searchInput.removeAttribute('aria-activedescendant');
-}
-function hideSearchDropdown() {
-  searchDropdown.hidden = true;
-  searchInput.setAttribute('aria-expanded', 'false');
-  _activeSearchIndex = -1;
-  searchInput.removeAttribute('aria-activedescendant');
-}
-function selectStation(stationId) {
-  hideSearchDropdown();
-  searchInput.value = '';
-  searchInput.blur();
-  flyToAndOpen(stationId);
-}
-function setActiveSearchItem(idx) {
-  const items = searchDropdown.querySelectorAll('li');
-  if (!items.length) return;
-  if (idx < 0) idx = items.length - 1;
-  if (idx >= items.length) idx = 0;
-  _activeSearchIndex = idx;
-  items.forEach((it, i) => it.classList.toggle('active', i === idx));
-  items[idx].scrollIntoView({ block: 'nearest' });
-  searchInput.setAttribute('aria-activedescendant', items[idx].id);
-}
-searchInput.addEventListener('input', () => showSearchDropdown(searchInput.value));
-searchInput.addEventListener('focus', () => { if (searchInput.value) showSearchDropdown(searchInput.value); });
-searchInput.addEventListener('blur',  () => setTimeout(hideSearchDropdown, 120));
-searchInput.addEventListener('keydown', (e) => {
-  if (e.key === 'Escape') { searchInput.value = ''; hideSearchDropdown(); searchInput.blur(); return; }
-  if (searchDropdown.hidden) return;
-  const items = searchDropdown.querySelectorAll('li');
-  if (!items.length) return;
-  if (e.key === 'ArrowDown') { e.preventDefault(); setActiveSearchItem(_activeSearchIndex + 1); }
-  else if (e.key === 'ArrowUp') { e.preventDefault(); setActiveSearchItem(_activeSearchIndex - 1); }
-  else if (e.key === 'Enter') {
-    e.preventDefault();
-    const idx = _activeSearchIndex >= 0 ? _activeSearchIndex : 0;
-    if (items[idx].dataset.stationId) selectStation(items[idx].dataset.stationId);
-  }
-});
-
-function flyToAndOpen(stationId) {
-  const f = _featureByStation.get(stationId);
-  if (!f) { showToast('Station not found'); return; }
-  map.flyTo({ center: f.centroid, zoom: SEARCH_FLY_ZOOM, speed: SEARCH_FLY_SPEED, animate: !reduceMotion });
-  map.once('moveend', () => openModalByStation(stationId));
-}
-
-// ── Photo gallery modal + lightbox ────────────────────────────────────────────
-let lastFocusedEl = null;
-function openModalByStation(stationId) {
-  const f = _featureByStation.get(stationId);
-  if (!f) return;
-  const dtStr = getSelectedDateTime();
-
-  document.getElementById("modal-station-name").textContent = f.name;
-  document.getElementById("modal-timestamp").textContent    = formatDisplayTimestamp(dtStr);
-  document.getElementById("modal-dash-link").innerHTML =
-    `<a href="${DASH_URL(stationId)}" target="_blank" rel="noopener">Open ${f.name} dashboard &rarr;</a>`;
-
-  const grid = document.getElementById("photo-grid");
-  grid.innerHTML = "";
-  const dateStr   = dateInput.value;
-  const validDirs = DIR_ORDER.filter(dir => isValidForDate(stationId, dir, dateStr));
-  if (validDirs.length === 0) {
-    const msg = document.createElement("p");
-    msg.style.cssText = "color:var(--text-muted);font-size:0.85rem;padding:0.5rem 0";
-    msg.textContent = "No photos available for this station on the selected date.";
-    grid.append(msg);
-  }
-  validDirs.forEach(dir => {
-    const card = document.createElement("div");
-    card.className = "photo-card";
-    const img = document.createElement("img");
-    img.alt = `${f.name} — ${DIR_LABELS[dir] || dir}`;
-    img.src = photoUrl(stationId, dtStr, dir);
-    img.loading = "lazy";
-    img.addEventListener("error", () => card.remove());
-    img.addEventListener("click", () => openLightbox(
-      rawPhotoUrl(stationId, dtStr, dir),
-      `${f.name} · ${formatDisplayTimestamp(dtStr)} · ${DIR_LABELS[dir] || dir}`
-    ));
-    const label = document.createElement("div");
-    label.className = "photo-dir-label";
-    label.textContent = DIR_LABELS[dir] || dir;
-    card.append(img, label);
-    grid.append(card);
-  });
-
-  lastFocusedEl = document.activeElement;
-  _selectedStation = stationId;
-  updateUrl();
-  modal.showModal();
-  document.getElementById("modal-close").focus();
-}
-function closeModal() {
-  modal.close();
-  _selectedStation = null;
-  updateUrl();
-  if (lastFocusedEl) { lastFocusedEl.focus(); lastFocusedEl.blur(); }
-}
-document.getElementById("modal-close").addEventListener("click", closeModal);
-modal.addEventListener("click", (e) => { if (e.target === modal) closeModal(); });
-modal.addEventListener("cancel", (e) => { e.preventDefault(); closeModal(); });
-
-const lightboxImg     = document.getElementById("lightbox-img");
-const lightboxCaption = document.getElementById("lightbox-caption");
-function openLightbox(url, caption) {
-  lightboxImg.src = url;
-  lightboxImg.alt = caption;
-  lightboxCaption.textContent = caption;
-  lightbox.showModal();
-}
-function closeLightbox() { lightbox.close(); lightboxImg.src = ""; }
-document.getElementById("lightbox-close").addEventListener("click", closeLightbox);
-lightbox.addEventListener("click", (e) => { if (e.target === lightbox) closeLightbox(); });
-lightbox.addEventListener("cancel", (e) => { e.preventDefault(); closeLightbox(); });
-
-// ── Info modal ────────────────────────────────────────────────────────────────
-document.getElementById("btn-info").addEventListener("click", () => infoModal.showModal());
-document.getElementById("info-modal-close").addEventListener("click", () => infoModal.close());
-infoModal.addEventListener("click", (e) => { if (e.target === infoModal) infoModal.close(); });
-infoModal.addEventListener("cancel", (e) => { e.preventDefault(); infoModal.close(); });
-if (!localStorage.getItem("mco-info-seen") && !_exportParam) {
-  setTimeout(() => { if (!infoModal.open && !modal.open) infoModal.showModal(); }, 350);
-  localStorage.setItem("mco-info-seen", "1");
-}
-
-// ── Date / time controls ──────────────────────────────────────────────────────
-dateInput.addEventListener("change", () => { clampDate(); updateUrl(); refreshMapImages(); });
-timeInput.addEventListener("change", () => { clampDate(); updateUrl(); refreshMapImages(); });
-
-// Clamp date to [min, max] and time to the latest available slot on the latest date.
-function clampDate() {
-  if (dateInput.min && dateInput.value < dateInput.min) {
-    dateInput.value = dateInput.min;
-    showToast(`Photos begin ${dateInput.min} — date adjusted.`);
-    return true;
-  }
-  if (dateInput.max && dateInput.value > dateInput.max) {
-    dateInput.value = dateInput.max;
-    showToast("Date is in the future — adjusted to today.");
-    return true;
-  }
-  const maxTs = computeMaxTimestep();
-  if (dateInput.value === maxTs.date && timeInput.value > maxTs.time) {
-    timeInput.value = maxTs.time;
-    showToast("Time not yet available — adjusted to latest.");
-    return true;
-  }
-  return false;
-}
-function stepDate(delta) {
-  const d = new Date(dateInput.value + "T12:00:00");
-  d.setDate(d.getDate() + delta);
-  const newDate = [d.getFullYear(), _pad(d.getMonth() + 1), _pad(d.getDate())].join("-");
-  if (delta < 0 && dateInput.min && newDate < dateInput.min) { showToast("Already at the earliest available date."); return false; }
-  if (delta > 0 && newDate > computeMaxTimestep(0).date)      { showToast("Already at the most recent available date."); return false; }
-  dateInput.value = newDate;
-  clampDate();
-  updateUrl();
-  return true;
-}
-let _holdTimer = null, _holdInterval = null;
-function startHold(delta) {
-  if (!stepDate(delta)) return;
-  _holdTimer = setTimeout(() => {
-    _holdInterval = setInterval(() => { if (!stepDate(delta)) stopHold(); }, 120);
-  }, 450);
-}
-function stopHold() {
-  if (_holdTimer === null && _holdInterval === null) return;
-  clearTimeout(_holdTimer); clearInterval(_holdInterval);
-  _holdTimer = null; _holdInterval = null;
-  refreshMapImages();
-}
-const _btnDatePrev = document.getElementById("btn-date-prev");
-const _btnDateNext = document.getElementById("btn-date-next");
-_btnDatePrev.addEventListener("mousedown",  (e) => { e.preventDefault(); startHold(-1); });
-_btnDateNext.addEventListener("mousedown",  (e) => { e.preventDefault(); startHold(+1); });
-_btnDatePrev.addEventListener("touchstart", (e) => { e.preventDefault(); startHold(-1); }, { passive: false });
-_btnDateNext.addEventListener("touchstart", (e) => { e.preventDefault(); startHold(+1); }, { passive: false });
-_btnDatePrev.addEventListener("keydown", (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); if (stepDate(-1)) refreshMapImages(); } });
-_btnDateNext.addEventListener("keydown", (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); if (stepDate(+1)) refreshMapImages(); } });
-document.addEventListener("mouseup", stopHold);
-document.addEventListener("touchend", stopHold);
-document.addEventListener("touchcancel", stopHold);
-
-// ── Boundaries toggle (county lines + tribal nations, together) ───────────────
-const BOUNDARY_LAYERS = ["counties-line", "tribal-fill", "tribal-line", "tribal-label"];
-const btnCounties = document.getElementById("btn-counties");
-btnCounties.setAttribute("aria-pressed", showCounties ? "true" : "false");
-btnCounties.addEventListener("click", () => {
-  showCounties = !showCounties;
-  btnCounties.setAttribute("aria-pressed", showCounties ? "true" : "false");
-  lsSet("mco-photos-counties", showCounties ? "1" : "0");
-  const vis = showCounties ? "visible" : "none";
-  for (const lid of BOUNDARY_LAYERS) {
-    if (map.getLayer(lid)) map.setLayoutProperty(lid, "visibility", vis);
-  }
-  updateUrl();
-});
-
-// ── Share ─────────────────────────────────────────────────────────────────────
-// Copy the current (deep-link) URL. Uses the async Clipboard API where available,
-// with an execCommand fallback, and always surfaces a toast so the click has
-// visible feedback even if the clipboard is blocked.
-async function copyShareLink() {
-  const url = location.href;
-  try {
-    if (navigator.clipboard && window.isSecureContext) {
-      await navigator.clipboard.writeText(url);
-      showToast("Link copied to clipboard!");
-      return;
-    }
-  } catch { /* fall through to the execCommand fallback */ }
-  try {
-    const ta = document.createElement("textarea");
-    ta.value = url;
-    ta.style.cssText = "position:fixed;top:0;left:0;opacity:0";
-    document.body.appendChild(ta);
-    ta.focus(); ta.select();
-    const ok = document.execCommand("copy");
-    document.body.removeChild(ta);
-    showToast(ok ? "Link copied to clipboard!" : "Copy this link: " + url, ok ? 2200 : 6000);
-  } catch {
-    showToast("Copy this link: " + url, 6000);
-  }
-}
-document.getElementById("btn-share").addEventListener("click", copyShareLink);
-
-// ── Global keyboard shortcuts ─────────────────────────────────────────────────
-window.addEventListener("keydown", (e) => {
-  if (e.key === '/' && !e.metaKey && !e.ctrlKey && !e.altKey) {
-    const t = e.target;
-    if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.tagName === 'SELECT' || t.isContentEditable)) return;
-    e.preventDefault();
-    searchInput.focus();
-    searchInput.select();
-  }
-});
-
-// ── URL sync & social meta ────────────────────────────────────────────────────
-function updateSocialMeta() {
-  const dirLabel = DIR_LABELS[currentDir] || currentDir;
-  const dateFmt = new Intl.DateTimeFormat("en-US", { year: "numeric", month: "long", day: "numeric" })
-    .format(new Date(dateInput.value + "T12:00:00"));
-  const [h, m] = timeInput.value.split(":").map(Number);
-  const timeFmt = `${h % 12 || 12}:${String(m).padStart(2, "0")} ${h >= 12 ? "PM" : "AM"} MT`;
-  const title = `Montana Mesonet Photos · ${dateFmt} · ${timeFmt} · ${dirLabel}`;
-  const desc  = `Montana weather station photos for ${dateFmt} at ${timeFmt}, ${dirLabel} direction. ` +
-                `A service of the Montana Climate Office.`;
-  document.title = title;
-  const previewUrl = new URL("preview.png", location.href).href;
-  const set = (sel, content) => document.querySelector(sel)?.setAttribute("content", content);
-  set('meta[property="og:title"]', title);
-  set('meta[property="og:description"]', desc);
-  set('meta[property="og:url"]', location.href);
-  set('meta[property="og:image"]', previewUrl);
-  set('meta[name="twitter:title"]', title);
-  set('meta[name="twitter:description"]', desc);
-  set('meta[name="twitter:image"]', previewUrl);
-  set('meta[name="description"]', desc);
-}
-function updateUrl() {
-  const params = { date: dateInput.value, time: parseInt(timeInput.value), dir: currentDir };
-  if (showCounties) params.overlay = "counties";
-  const theme = document.documentElement.dataset.theme;
-  if (theme) params.theme = theme;
-  if (_mapReady && map) {
-    const c = map.getCenter();
-    params.lng = c.lng.toFixed(4);
-    params.lat = c.lat.toFixed(4);
-    params.zoom = map.getZoom().toFixed(2);
-  }
-  if (_selectedStation) params.station = _selectedStation;
-  history.replaceState(null, "", `${location.pathname}?${new URLSearchParams(params)}`);
-  updateSocialMeta();
-}
-
-// ── Export (PNG with MCO branding) ────────────────────────────────────────────
-// Renders a fixed EXPORT_W×EXPORT_H MapLibre map off-screen so the output is
-// identical regardless of the live viewport, composites the MCO logo, and
-// downloads. ?export=1|light|dark drives this for the social-preview generator.
-document.getElementById("btn-export").addEventListener("click", exportPNG);
-
-async function exportPNG() {
-  if (!_activeFeatures.length) { showToast("Map not loaded yet."); return; }
-  showToast("Exporting…");
-  const W = EXPORT_W, H = EXPORT_H;
-
-  const holder = document.createElement('div');
-  holder.style.cssText = `position:fixed;left:-99999px;top:0;width:${W}px;height:${H}px;pointer-events:none;`;
-  document.body.appendChild(holder);
-
-  const xm = new maplibregl.Map({
-    container: holder,
-    style: basemapStyleUrl(),
-    bounds: MT_FIT_BOUNDS,
-    fitBoundsOptions: { padding: 24, animate: false },
-    interactive: false,
-    attributionControl: false,
-    preserveDrawingBuffer: true,   // required for getCanvas() readback
-    pixelRatio: EXPORT_SCALE,      // render at 2× for a high-resolution PNG
-    fadeDuration: 0,
-  });
-
-  try {
-    await once(xm, 'load');
-    const dt = getSelectedDateTime();
-    const dateStr = dateInput.value;
-    const valid = _activeFeatures.filter(f => isValidForDate(f.station, currentDir, dateStr));
-
-    // Montana boundary frame below the photos
-    xm.addSource('state', { type: 'geojson', data: _stateFC || 'data/mt_state_simple.geojson' });
-    xm.addLayer({ id: 'state-line', type: 'line', source: 'state',
-                  layout: { 'line-join': 'round', 'line-cap': 'round' }, paint: stateLinePaint() });
-
-    // Photos (awaited so the map is complete before capture)
-    const crops = await Promise.all(valid.map(f => loadCrop(photoUrl(f.station, dt, currentDir))));
-    valid.forEach((f, i) => {
-      if (!crops[i]) return;
-      const sid = 'photo-' + f.station;
-      xm.addSource(sid, { type: 'image', url: crops[i], coordinates: f.coords });
-      xm.addLayer({ id: sid, type: 'raster', source: sid,
-                    paint: { 'raster-fade-duration': 0, 'raster-resampling': 'linear' } });
-    });
-
-    // Boundary overlays lightly over the photos — only when the toggle is on.
-    if (showCounties) {
-      xm.addSource('counties', { type: 'geojson', data: _countiesFC || 'data/mt_counties_simple.geojson' });
-      xm.addSource('tribal',   { type: 'geojson', data: _tribalFC   || 'data/mt_reservations_simple.geojson' });
-      xm.addLayer({ id: 'counties-line', type: 'line', source: 'counties', paint: countiesLinePaint() });
-      xm.addLayer({ id: 'tribal-fill',   type: 'fill', source: 'tribal',   paint: tribalFillPaint() });
-      xm.addLayer({ id: 'tribal-line',   type: 'line', source: 'tribal',   paint: tribalLinePaint() });
-    }
-
-    // Cell borders on top
-    const validIds = valid.map(f => f.station);
-    xm.addSource('cells', { type: 'geojson', data: _cellsFC });
-    xm.addLayer({ id: 'cells-outline', type: 'line', source: 'cells',
-                  filter: ['in', ['get', 'station'], ['literal', validIds]],
-                  paint: { 'line-color': cssVar('--border'), 'line-width': 0.8, 'line-opacity': 0.9 } });
-
-    // Reservation labels on top — only when the toggle is on.
-    if (showCounties) {
-      xm.addLayer({ id: 'tribal-label', type: 'symbol', source: 'tribal', minzoom: 0,
-                    layout: TRIBAL_LABEL_LAYOUT, paint: tribalLabelPaint() });
-    }
-
-    await once(xm, 'idle');
-
-    const mc = xm.getCanvas();
-    const canvas = document.createElement('canvas');
-    canvas.width = mc.width; canvas.height = mc.height;   // 2× via pixelRatio
-    const ctx = canvas.getContext('2d');
-    ctx.drawImage(mc, 0, 0);
-    // Draw the branding card in logical (EXPORT_W×EXPORT_H) coords, scaled up so
-    // its text/shapes stay crisp at the higher output resolution.
-    ctx.save();
-    ctx.scale(canvas.width / W, canvas.height / H);
-    await drawBranding(ctx, W, H);
-    ctx.restore();
-
-    canvas.toBlob((blob) => {
-      if (!blob) { showToast("Export failed."); return; }
-      const url = URL.createObjectURL(blob);
-      const a = Object.assign(document.createElement("a"), {
-        href: url, download: `mesonet-photos-${dt.slice(0, 10)}-${currentDir}.png`,
-      });
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
-      URL.revokeObjectURL(url);
-      showToast("Exported!");
-    }, "image/png");
-  } catch (err) {
-    console.error(err);
-    showToast("Export failed.");
-  } finally {
-    xm.remove();
-    holder.remove();
-  }
-}
-
-function loadImg(url) {
-  return new Promise((res) => {
-    const i = new Image();
-    i.crossOrigin = "anonymous";
-    i.onload = () => res(i);
-    i.onerror = () => res(null);
-    i.src = url;
-  });
-}
-function roundRectPath(ctx, x, y, w, h, r) {
-  if (ctx.roundRect) { ctx.roundRect(x, y, w, h, r); return; }
-  ctx.moveTo(x + r, y);
-  ctx.arcTo(x + w, y,     x + w, y + h, r);
-  ctx.arcTo(x + w, y + h, x,     y + h, r);
-  ctx.arcTo(x,     y + h, x,     y,     r);
-  ctx.arcTo(x,     y,     x + w, y,     r);
-  ctx.closePath();
-}
-// Branding card in the lower-left corner (over the basemap).
-async function drawBranding(ctx, W, H) {
-  const cs = getComputedStyle(document.documentElement);
-  const bgSurface = cs.getPropertyValue("--bg-surface").trim();
-  const borderClr = cs.getPropertyValue("--border").trim();
-  const accentLt  = cs.getPropertyValue("--accent-light").trim();
-  const textMuted = cs.getPropertyValue("--text-muted").trim();
-
-  const BRAND_W = 280, BRAND_BOX_H = 80;
-  const BX = 24, BY = H - 24 - BRAND_BOX_H, PAD = 12, LOGO = 52;
-  const LX = BX + PAD, LY = BY + (BRAND_BOX_H - LOGO) / 2;
-
-  ctx.save();
-  ctx.globalAlpha = 0.88;
-  ctx.fillStyle = bgSurface;
-  ctx.beginPath(); roundRectPath(ctx, BX, BY, BRAND_W, BRAND_BOX_H, 10); ctx.fill();
-  ctx.globalAlpha = 0.5;
-  ctx.strokeStyle = borderClr; ctx.lineWidth = 1; ctx.stroke();
-  ctx.restore();
-
-  const logoImg = await loadImg("https://climate.umt.edu/assets/images/MCO_logo_icon_only.png");
-  if (logoImg) {
-    ctx.save();
-    ctx.beginPath(); roundRectPath(ctx, LX, LY, LOGO, LOGO, 8); ctx.clip();
-    ctx.drawImage(logoImg, LX, LY, LOGO, LOGO);
-    ctx.restore();
-  }
-
-  const TX = LX + LOGO + 10, TW = BX + BRAND_W - PAD - TX, midY = BY + BRAND_BOX_H / 2;
-  ctx.textBaseline = "middle";
-  ctx.fillStyle = accentLt;
-  ctx.font = "700 13px 'Outfit', system-ui, sans-serif";
-  ctx.fillText("Mesonet Photo Explorer", TX, midY - 14, TW);
-  ctx.fillStyle = textMuted;
-  ctx.font = "400 11px 'Outfit', system-ui, sans-serif";
-  ctx.fillText("Montana Climate Office", TX, midY, TW);
-  ctx.fillText(`${formatDisplayTimestamp(getSelectedDateTime())} · ${DIR_LABELS[currentDir] || currentDir}`, TX, midY + 13, TW);
-  ctx.textAlign = "right";
-  ctx.font = "italic 10px 'Outfit', system-ui, sans-serif";
-  ctx.fillText("climate.umt.edu", BX + BRAND_W - PAD, BY + BRAND_BOX_H - 7);
-  ctx.textAlign = "left";
-  ctx.textBaseline = "alphabetic";
-}
-</script>
+<script src="https://unpkg.com/maplibre-gl@5.18.0/dist/maplibre-gl.js"
+        integrity="sha384-MYTfGytf3SxNyO7ZAu/U0wHCcs3NpqE92Q3wBz5PQhat8kEA/wbwb9qY6H/JLyuR"
+        crossorigin="anonymous"></script>
+<!-- mco-web-style (window.MCO / MCO.map) -->
+<script src="https://cdn.jsdelivr.net/gh/mt-climate-office/mco-web-style@0.3.1/core/mco-core.js"
+        integrity="sha384-BHWqotPZgNN9VvHA0OfSUux8LD04tIOXhCzfxgCvfy5hmYARIl8ifPU0FHm6VNAD"
+        crossorigin="anonymous"></script>
+<script src="https://cdn.jsdelivr.net/gh/mt-climate-office/mco-web-style@0.3.1/map/mco-map.js"
+        integrity="sha384-0aF67+MSXmcocGs8r3qiehgDNzgXo9F48olS5OX575wO2llw2cuGcqLpd6+L7D76"
+        crossorigin="anonymous"></script>
+<script src="app.js"></script>
 </body>
 </html>

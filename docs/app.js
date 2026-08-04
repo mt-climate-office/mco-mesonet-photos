@@ -1,0 +1,1130 @@
+/* ============================================================================
+   Montana Mesonet Photo Explorer
+
+   Consumes mco-web-style (window.MCO / MCO.map) — see index.html for the
+   pinned + SRI kit tags. Classic script: the kit globals need no modules, and
+   an external file lets the page ship a strict CSP without 'unsafe-inline'.
+
+   App-owned (deliberately NOT in the kit — MIGRATING.md § kit-deferred):
+   the photo-mosaic machinery (cover-crop + LRU cache, one image source per
+   station cell), the gallery/lightbox dialogs, the date stepper, the direction
+   segments + <select> fallback, updateSocialMeta, and the branded PNG export.
+   ========================================================================== */
+(function () {
+'use strict';
+
+// ── Constants ─────────────────────────────────────────────────────────────────
+const CLOUDFRONT_BASE = "https://mesonet.climate.umt.edu/data";        // processed WebP + raw JPG photos
+const PHOTOS_META     = "https://mesonet.climate.umt.edu/api/v2/photos?type=json";
+const STATIONS_META   = "https://mesonet.climate.umt.edu/api/stations?type=json";
+const STATUS_META     = "https://mesonet.climate.umt.edu/api/stations/status?type=json";
+const GRID_URL        = "grid.geojson";
+const DASH_URL        = (s) => `https://mesonet.climate.umt.edu/dash/${s}`;
+const LOGO_URL        = "assets/mco-logo.png";   // vendored — never hot-link climate.umt.edu (HOUSE-STYLE §1)
+
+const DIR_ORDER  = ["N", "S", "E", "W", "SNOW", "NS", "SS"];
+const DIR_LABELS = { N: "North", S: "South", E: "East", W: "West", SNOW: "Snow", NS: "North Sky", SS: "South Sky" };
+const DEFAULT_DIR = "N";
+
+const SEARCH_FLY_ZOOM    = 8.5;
+const SEARCH_FLY_SPEED   = 1.4;
+const SEARCH_MAX_RESULTS = 8;
+
+// localStorage (HOUSE-STYLE §4: app-private keys are mco-<app>-* prefixed and
+// re-validated on read). LEGACY_SEEN_KEY was unprefixed before the kit
+// migration — read-old/write-new so returning visitors don't re-see the intro.
+const LS_SEEN     = 'mco-photos-seen-intro';
+const LS_SEEN_OLD = 'mco-info-seen';
+const LS_COUNTIES = 'mco-photos-counties';
+
+// Fixed export layout dimensions (Montana framing / Playwright viewport). The PNG
+// is rendered at EXPORT_SCALE× these for a crisp, high-resolution image.
+const EXPORT_W = 1400, EXPORT_H = 700;
+const EXPORT_SCALE = 2;   // → 2800×1400 output, independent of the device's DPR
+// Photos are cover-cropped to a centered square before being warped into their
+// (near-square) grid cell, so they fill the cell without aspect squish.
+const CROP_SIZE = 320;
+const BLANK_IMG = 'data:image/gif;base64,R0lGODlhAQABAAAAACH5BAEKAAEALAAAAAABAAEAAAICTAEAOw==';
+
+const cssVar = (n, fallback) =>
+  getComputedStyle(document.documentElement).getPropertyValue(n).trim() || fallback;
+const once = (m, ev) => new Promise((r) => m.once(ev, r));
+
+// Local-getter date shift. Deliberately NOT MCO.shiftDate: that reads its
+// result back with toISOString() (UTC), which lands a day off for viewers in
+// UTC+13/+14 and UTC−12. Kit defect reported separately.
+function shiftDate(dateStr, deltaDays) {
+  const d = new Date(dateStr + "T12:00:00");
+  d.setDate(d.getDate() + deltaDays);
+  return `${d.getFullYear()}-${MCO.pad2(d.getMonth() + 1)}-${MCO.pad2(d.getDate())}`;
+}
+
+// ── DOM refs ────────────────────────────────────────────────────────────────
+const mainEl         = document.getElementById("main");
+const dateInput      = document.getElementById("date-input");
+const timeInput      = document.getElementById("time-input");
+const tooltipEl      = document.getElementById("tooltip");
+const searchInput    = document.getElementById("search-input");
+const searchDropdown = document.getElementById("search-dropdown");
+const infoModal      = document.getElementById("info-modal");
+const modal          = document.getElementById("modal");
+const lightbox       = document.getElementById("lightbox");
+const srTableEl      = document.getElementById("sr-photo-table");
+
+// Screen-reader announcements for what the WebGL mosaic shows (HOUSE-STYLE
+// §5.1) — the hidden-table twin below carries the detail.
+const live = MCO.createLiveRegion();
+
+// ── State ─────────────────────────────────────────────────────────────────────
+let stationDirs = {};                 // stationId → { dirCode: "YYYY-MM-DD" photo start date }
+let currentDir;
+let showCounties;
+let map;
+let _activeFeatures = [];             // [{ station, name, coords:[4×[lng,lat]], centroid, id }]
+let _featureByStation = new Map();
+let _cellsFC = null;                  // GeoJSON FeatureCollection for the 'cells' source (numeric ids)
+let _stationsList = [];               // search index: [{ station, name }]
+let _tribalFC = null, _stateFC = null, _countiesFC = null;
+let _mapReady = false;
+let _selectedStation = null;
+let _refreshToken = 0;                // guards against stale async photo loads on rapid date-stepping
+let _hoveredId = null;
+let _photoState = new Map();          // station → true|false (has a photo for the current selection)
+let _lastAnnounced = '';
+const _cropCache = new Map();         // photoUrl → cover-cropped data URL
+
+// ── URL state ─────────────────────────────────────────────────────────────────
+const urlParams = MCO.urlParams();
+const getLower  = (k) => MCO.getParamLower(k, urlParams);
+
+const _initStation = getLower('station');
+
+// Single-character shortcuts need an opt-out (WCAG 2.1.4). Re-emitted on
+// replaceState so it sticks while browsing, but excluded from shared links.
+const kbdShortcuts = getLower('kbd') !== 'off';
+
+// Headless export: ?export=light|dark forces the theme before the map is built.
+// Set directly (not MCO.setTheme) so a CI screenshot run never persists a theme.
+const _exportParam = urlParams.get('export');
+if (_exportParam === 'light' || _exportParam === 'dark') {
+  document.documentElement.dataset.theme = _exportParam;
+}
+
+// ── Time helpers (Mountain Time — house convention for every stamp) ───────────
+// Latest available photo timestep in MT, lagged so photos have been processed.
+function computeMaxTimestep(lagMinutes = 30) {
+  const [nowH, nowM] = MCO.hhmmNowMT().split(':').map(Number);
+  const thresh = nowH * 60 + nowM - lagMinutes;
+  const times  = [...timeInput.options].map(o => o.value);
+  const today  = MCO.todayMT();
+  for (let i = times.length - 1; i >= 0; i--) {
+    const [h, m] = times[i].split(":");
+    if (+h * 60 + +m <= thresh) return { date: today, time: times[i] };
+  }
+  return { date: shiftDate(today, -1), time: times[times.length - 1] };
+}
+
+function getSelectedDateTime() { return `${dateInput.value}T${timeInput.value}`; }
+// Photo filenames zero out minutes+seconds: "2026-03-21T09:00:00" → "2026-03-21T090000".
+function photoUrl(station, dtStr, direction) {
+  return `${CLOUDFRONT_BASE}/photos/web/${station}/${dtStr.slice(0, 13)}0000_${direction}.webp`;
+}
+function rawPhotoUrl(station, dtStr, direction) {
+  return `${CLOUDFRONT_BASE}/photos/raw/${station}/${dtStr.slice(0, 13)}0000_${direction}.jpg`;
+}
+// The selected slot is a Mountain-Time wall clock, so it's formatted from its
+// parts rather than parsed as an instant — but it still carries the MT label.
+function formatDisplayTimestamp(dtStr) {
+  const [date, time] = dtStr.split("T");
+  const [h, m] = time.split(":");
+  const hour = parseInt(h);
+  return `${date} ${hour % 12 || 12}:${m} ${hour >= 12 ? "PM" : "AM"} MT`;
+}
+// True when the station has the given direction AND dateStr ≥ its photo start date.
+function isValidForDate(station, dir, dateStr) {
+  const dirs = stationDirs[station];
+  if (!dirs || !(dir in dirs)) return false;
+  return dateStr >= dirs[dir];
+}
+
+// ── Date / direction initial values (URL > localStorage > default) ────────────
+const _maxTs = computeMaxTimestep();
+dateInput.max   = MCO.todayMT();
+dateInput.value = urlParams.get("date") || _maxTs.date;
+const _timeParam = urlParams.get("time");
+timeInput.value  = _timeParam
+  ? (_timeParam.includes(":") ? _timeParam : `${String(_timeParam).padStart(2, "0")}:00:00`)
+  : _maxTs.time;
+const _dirParam = (getLower("dir") || "").toUpperCase();
+currentDir = DIR_ORDER.includes(_dirParam) ? _dirParam : DEFAULT_DIR;
+// Persisted values are re-validated exactly like URL params — another MCO app
+// (or an older version of this one) shares the origin.
+const _overlayParam = getLower("overlay");
+showCounties = _overlayParam !== null
+  ? _overlayParam === "counties"
+  : MCO.lsGet(LS_COUNTIES) === "1";
+
+// ── Grid-cell join helpers ────────────────────────────────────────────────────
+// Normalise a grid-cell ID ("C-07" ↔ "C-7") so the API `ace_grid` matches grid.geojson.
+function normCell(c) {
+  const m = /^([A-Za-z]+)-0*(\d+)$/.exec((c || "").trim());
+  return m ? `${m[1].toUpperCase()}-${+m[2]}` : (c || "").trim();
+}
+// Ray-casting point-in-polygon over a GeoJSON polygon's outer ring (lon/lat).
+function pointInPolygon(pt, geom) {
+  const ring = geom.coordinates[0];
+  const [x, y] = pt;
+  let inside = false;
+  for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
+    const [xi, yi] = ring[i], [xj, yj] = ring[j];
+    if (((yi > y) !== (yj > y)) && (x < (xj - xi) * (y - yi) / (yj - yi) + xi)) inside = !inside;
+  }
+  return inside;
+}
+function quadCentroid(coords) {
+  let x = 0, y = 0;
+  for (const [lng, lat] of coords) { x += lng; y += lat; }
+  return [x / coords.length, y / coords.length];
+}
+
+// ── Overlay paints ────────────────────────────────────────────────────────────
+// Kit paints (MCO.map.overlayPaints) with one sanctioned strengthening: here
+// the tribal fill lands over the photo mosaic rather than a neutral basemap, so
+// it needs more presence to read. The kit documents exactly this override.
+function tribalFillPaint() {
+  const dark = document.documentElement.dataset.theme !== 'light';
+  return { ...MCO.map.overlayPaints().tribalFill, 'fill-opacity': dark ? 0.25 : 0.18 };
+}
+
+// ── Map init ──────────────────────────────────────────────────────────────────
+map = new maplibregl.Map({
+  container: 'map',
+  style: MCO.map.cartoStyleUrl(),
+  ...MCO.map.initialCamera(urlParams),
+});
+MCO.map.addNavigation(map);                        // top-right, no compass
+MCO.map.addFitControl(map);                        // fused into the zoom group
+const zoomFloor = MCO.map.installZoomFloor(map);   // snap-back + resize refit
+
+// ── Theme ─────────────────────────────────────────────────────────────────────
+MCO.initThemeToggle({
+  button: document.getElementById('btn-theme'),
+  iconSun: document.getElementById('icon-sun'),
+  iconMoon: document.getElementById('icon-moon'),
+  onChange: () => {
+    // setStyle() wipes our sources/layers — re-add them once the new basemap loads.
+    map.setStyle(MCO.map.cartoStyleUrl());
+    map.once('style.load', () => { addCustomLayers(); });
+    updateUrl();
+  },
+});
+
+map.on('load', async () => {
+  await loadData();
+  addCustomLayers();
+  zoomFloor.refresh();
+  _mapReady = true;
+
+  // Deep-link to ?station=… , else publish a clean initial URL.
+  if (_initStation && _featureByStation.has(_initStation)) {
+    if (urlParams.has('lng')) openModalByStation(_initStation);
+    else                      flyToAndOpen(_initStation);
+  } else {
+    updateUrl();
+  }
+  // Headless export hook (scripts/generate_preview.py drives ?export=…).
+  // The 4 s delay is part of that contract — don't shorten it.
+  if (_exportParam) setTimeout(() => document.getElementById('btn-export').click(), 4000);
+});
+
+map.on('moveend', () => { if (_mapReady) updateUrl(); });
+
+// ── Data load ─────────────────────────────────────────────────────────────────
+async function loadData() {
+  let grid, allStations, statusRows, photosMeta;
+  try {
+    [grid, allStations, statusRows, photosMeta] = await Promise.all([
+      MCO.fetchJSON(GRID_URL),
+      MCO.fetchJSON(STATIONS_META),
+      MCO.fetchJSON(STATUS_META),
+      MCO.fetchJSON(PHOTOS_META),
+    ]);
+  } catch {
+    MCO.showToast("Failed to load map data. Please refresh.", 6000);
+    return;
+  }
+
+  // stationDirs[id] = { dirCode: "YYYY-MM-DD" start date } — all directions share one start date.
+  photosMeta.forEach(entry => {
+    const id = entry["Station ID"];
+    const startDate = entry["Photo Start Date"] || "2000-01-01";
+    stationDirs[id] = {};
+    entry["Photo Directions"].forEach(s => { stationDirs[id][s.split(" ")[0].toUpperCase()] = startDate; });
+  });
+
+  // Assemble the live station set: active HydroMet stations that have photos,
+  // each placed at its assigned grid cell (ace_grid) or the cell containing it.
+  const cellByCode      = new Map(grid.features.map(f => [normCell(f.properties.cell), f]));
+  const statusByStation = new Map(statusRows.map(r => [r.station, r]));
+  const feats = [], cellFeats = [];
+  let idc = 0;
+
+  allStations.filter(s => s.sub_network === "HydroMet").forEach(s => {
+    const st = statusByStation.get(s.station);
+    if (!st || st.status !== "active") return;
+    if (!(s.station in stationDirs))   return;
+    let cell = st.ace_grid ? cellByCode.get(normCell(st.ace_grid)) : null;
+    if (!cell) cell = grid.features.find(f => pointInPolygon([s.longitude, s.latitude], f.geometry));
+    if (!cell) return;
+    const ring   = cell.geometry.coordinates[0];             // [NW, NE, SE, SW, close]
+    const coords = [ring[0], ring[1], ring[2], ring[3]];     // image-source: [TL, TR, BR, BL]
+    const id = idc++;
+    feats.push({ station: s.station, name: s.name || s.station, coords, centroid: quadCentroid(coords), id });
+    cellFeats.push({ type: "Feature", id, geometry: cell.geometry,
+                     properties: { station: s.station, name: s.name || s.station } });
+  });
+
+  _activeFeatures   = feats;
+  _featureByStation = new Map(feats.map(f => [f.station, f]));
+  _cellsFC          = { type: "FeatureCollection", features: cellFeats };
+  _stationsList     = feats.map(f => ({ station: f.station, name: f.name }))
+                          .sort((a, b) => a.name.localeCompare(b.name));
+
+  // Constrain the date picker to the network's first-camera date; build direction UI.
+  const minDate = photosMeta.map(e => e["Photo Start Date"]).filter(Boolean).sort()[0];
+  if (minDate) { dateInput.min = minDate; clampDate(); }
+
+  const allDirs = DIR_ORDER.filter(d => Object.values(stationDirs).some(dirs => d in dirs));
+  if (!allDirs.includes(currentDir)) currentDir = allDirs.includes(DEFAULT_DIR) ? DEFAULT_DIR : allDirs[0];
+  buildDirectionControls(allDirs);
+}
+
+// ── Direction controls (segmented buttons + narrow-screen <select>) ───────────
+function buildDirectionControls(allDirs) {
+  const dirBtnsEl   = document.getElementById("dir-btns");
+  const dirSelectEl = document.getElementById("dir-select");
+  dirBtnsEl.innerHTML = "";
+  dirSelectEl.innerHTML = "";
+  allDirs.forEach(dir => {
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "nav-btn seg-btn";
+    btn.dataset.dir = dir;
+    btn.textContent = dir === "SNOW" ? "Snow" : dir;
+    // The visible glyph is an abbreviation — name the button properly for AT.
+    btn.setAttribute("aria-label", DIR_LABELS[dir] || dir);
+    btn.setAttribute("aria-pressed", dir === currentDir ? "true" : "false");
+    dirBtnsEl.append(btn);
+
+    const opt = document.createElement("option");
+    opt.value = dir;
+    opt.textContent = DIR_LABELS[dir] || dir;
+    opt.selected = dir === currentDir;
+    dirSelectEl.append(opt);
+  });
+}
+function setDirection(dir) {
+  currentDir = dir;
+  document.querySelectorAll("#dir-btns .seg-btn").forEach(b =>
+    b.setAttribute("aria-pressed", b.dataset.dir === currentDir ? "true" : "false"));
+  const ds = document.getElementById("dir-select");
+  if (ds) ds.value = currentDir;
+  updateUrl();
+  refreshMapImages();
+}
+document.getElementById("dir-btns").addEventListener("click", (e) => {
+  const btn = e.target.closest(".seg-btn");
+  if (btn) setDirection(btn.dataset.dir);
+});
+document.getElementById("dir-select").addEventListener("change", (e) => setDirection(e.target.value));
+
+// ── Layers ────────────────────────────────────────────────────────────────────
+function addLayerOnce(cfg) { if (!map.getLayer(cfg.id)) map.addLayer(cfg); }
+
+async function preloadOverlay(sourceId, url, save) {
+  try {
+    const fc = await MCO.fetchJSON(url);
+    save(fc);
+    const src = map.getSource(sourceId);
+    if (src) src.setData(fc);
+  } catch { /* overlays are decorative — silent failure is fine */ }
+}
+function addOverlaySource(id, url, cachedFC, save) {
+  if (!map.getSource(id)) map.addSource(id, { type: 'geojson', data: cachedFC || url });
+  if (!cachedFC) preloadOverlay(id, url, save);
+}
+
+// Add all custom sources + layers. Called on first load and re-called on every
+// setStyle() (theme toggle), which wipes them. Stack, bottom → top:
+// state frame → photo rasters → boundary overlays → cell borders/hit → labels.
+//
+// kit-override: no MCO.map.addHillshade here — the photo mosaic is the figure
+// on this map, and relief under opaque photo rasters would only show in the
+// untiled west while competing with the imagery elsewhere.
+function addCustomLayers() {
+  // CARTO draws its own dashed county boundaries from z9 — hide them so the
+  // Boundaries toggle is the single county treatment (HOUSE-STYLE §7).
+  if (map.getLayer('boundary_county')) {
+    map.setLayoutProperty('boundary_county', 'visibility', 'none');
+  }
+
+  addOverlaySource('tribal',   'data/mt_reservations_simple.geojson', _tribalFC,   fc => _tribalFC   = fc);
+  addOverlaySource('state',    'data/mt_state_simple.geojson',        _stateFC,    fc => _stateFC    = fc);
+  addOverlaySource('counties', 'data/mt_counties_simple.geojson',     _countiesFC, fc => _countiesFC = fc);
+
+  const paints = MCO.map.overlayPaints();
+
+  // Montana boundary frame — sits below the photos, so it reads around the
+  // edges of the mosaic. Always visible (not part of the boundaries toggle).
+  addLayerOnce({ id: 'state-line', type: 'line', source: 'state',
+                 layout: { 'line-join': 'round', 'line-cap': 'round' }, paint: paints.stateLine });
+
+  if (!map.getSource('cells')) map.addSource('cells', { type: 'geojson', data: _cellsFC });
+
+  // One image source + raster layer per station cell. URLs are filled in by
+  // refreshMapImages(); layers start hidden until their photo loads.
+  for (const f of _activeFeatures) {
+    const lid = 'photo-' + f.station;
+    if (!map.getSource(lid)) map.addSource(lid, { type: 'image', url: BLANK_IMG, coordinates: f.coords });
+    addLayerOnce({ id: lid, type: 'raster', source: lid,
+                   layout: { visibility: 'none' },
+                   paint: { 'raster-fade-duration': 0, 'raster-resampling': 'linear' } });
+  }
+
+  // Boundary overlays sit ABOVE the photos so they lightly overlay the mosaic.
+  // County lines + tribal fill/line/labels are toggled together by the
+  // "Boundaries" button (default off).
+  const overlayVis = showCounties ? 'visible' : 'none';
+  addLayerOnce({ id: 'counties-line', type: 'line', source: 'counties',
+                 layout: { visibility: overlayVis }, paint: paints.countiesLine });
+  addLayerOnce({ id: 'tribal-fill', type: 'fill', source: 'tribal',
+                 layout: { visibility: overlayVis }, paint: tribalFillPaint() });
+  addLayerOnce({ id: 'tribal-line', type: 'line', source: 'tribal',
+                 layout: { visibility: overlayVis }, paint: paints.tribalLine });
+
+  addLayerOnce({ id: 'cells-outline', type: 'line', source: 'cells',
+                 paint: { 'line-color': cssVar('--border', '#3a4558'), 'line-width': 0.8, 'line-opacity': 0.9 } });
+  // Transparent fill on top for hit-testing + hover highlight (feature-state).
+  addLayerOnce({ id: 'cells-fill', type: 'fill', source: 'cells',
+                 paint: { 'fill-color': cssVar('--selection-ring', '#5aaee8'),
+                          'fill-opacity': ['case', ['boolean', ['feature-state', 'hover'], false], 0.32, 0] } });
+
+  // Reservation labels on top, toggled with the rest of the boundary overlays.
+  addLayerOnce({ id: 'tribal-label', type: 'symbol', source: 'tribal', minzoom: 6,
+                 layout: { ...MCO.map.TRIBAL_LABEL_LAYOUT, visibility: overlayVis },
+                 paint: paints.tribalLabelPaint });
+
+  refreshMapImages();
+}
+
+// Cover-crop a loaded image to a centered square, returned as a data URL.
+function coverCropToDataURL(img, size) {
+  const c = document.createElement('canvas');
+  c.width = size; c.height = size;
+  const ctx = c.getContext('2d');
+  const s  = Math.min(img.naturalWidth, img.naturalHeight);
+  const sx = (img.naturalWidth  - s) / 2;
+  const sy = (img.naturalHeight - s) / 2;
+  ctx.drawImage(img, sx, sy, s, s, 0, 0, size, size);
+  return c.toDataURL('image/jpeg', 0.9);
+}
+function cacheCrop(url, dataUrl) {
+  _cropCache.set(url, dataUrl);
+  if (_cropCache.size > 500) _cropCache.delete(_cropCache.keys().next().value);
+}
+// Load + crop a photo, resolving to its data URL (or null on 404). Caches result.
+function loadCrop(url) {
+  const cached = _cropCache.get(url);
+  if (cached) return Promise.resolve(cached);
+  return new Promise((resolve) => {
+    const img = new Image();
+    img.crossOrigin = 'anonymous';
+    img.onload  = () => { try { const d = coverCropToDataURL(img, CROP_SIZE); cacheCrop(url, d); resolve(d); }
+                          catch { resolve(null); } };
+    img.onerror = () => resolve(null);
+    img.src = url;
+  });
+}
+
+// Point every cell's photo at the current date/time/direction. Cells valid for
+// the date get their outline + click target; missing individual photos hide the
+// raster but keep the (empty, still-clickable) cell.
+function refreshMapImages() {
+  if (!map.getLayer('cells-fill')) return;
+  const dt = getSelectedDateTime();
+  const dateStr = dateInput.value;
+  const token = ++_refreshToken;
+
+  const valid = _activeFeatures.filter(f => isValidForDate(f.station, currentDir, dateStr)).map(f => f.station);
+  const validSet = new Set(valid);
+  const filt = ['in', ['get', 'station'], ['literal', valid]];
+  map.setFilter('cells-outline', filt);
+  map.setFilter('cells-fill', filt);
+
+  // Photo availability resolves asynchronously, so the sr-table twin starts
+  // from the full cell list marked pending (null) and is re-rendered as loads
+  // land — a single stalled image can't leave the twin empty or short.
+  const state = new Map();
+  let pending = 0;
+  let renderTimer = null;
+  const scheduleRender = () => {
+    if (renderTimer !== null) return;
+    renderTimer = setTimeout(() => {
+      renderTimer = null;
+      if (token === _refreshToken) renderSRTable();
+    }, 400);
+  };
+  const finish = () => {
+    if (token !== _refreshToken) return;
+    clearTimeout(renderTimer); renderTimer = null;
+    renderSRTable();
+    announceMosaic();
+  };
+
+  for (const f of _activeFeatures) {
+    if (!validSet.has(f.station)) continue;
+    state.set(f.station, null);
+  }
+  _photoState = state;
+  renderSRTable();
+
+  for (const f of _activeFeatures) {
+    const lid = 'photo-' + f.station;
+    if (!map.getLayer(lid)) continue;
+    if (!validSet.has(f.station)) { map.setLayoutProperty(lid, 'visibility', 'none'); continue; }
+    pending++;
+    const url = photoUrl(f.station, dt, currentDir);
+    loadCrop(url).then((dataUrl) => {
+      if (token !== _refreshToken) return;   // superseded by a newer refresh
+      state.set(f.station, !!dataUrl);
+      if (map.getLayer(lid)) {
+        if (dataUrl) {
+          map.getSource(lid)?.updateImage({ url: dataUrl });
+          map.setLayoutProperty(lid, 'visibility', 'visible');
+        } else {
+          map.setLayoutProperty(lid, 'visibility', 'none');
+        }
+      }
+      if (--pending === 0) finish(); else scheduleRender();
+    });
+  }
+  if (pending === 0) finish();
+}
+
+// Screen-reader table twin of the WebGL photo mosaic (HOUSE-STYLE §5.2): one
+// row per drawn grid cell, rebuilt whenever the mosaic is.
+function renderSRTable() {
+  if (!srTableEl) return;
+  const stamp = formatDisplayTimestamp(getSelectedDateTime());
+  const dirLabel = DIR_LABELS[currentDir] || currentDir;
+  const shown = _activeFeatures
+    .filter(f => _photoState.has(f.station))
+    .sort((a, b) => a.name.localeCompare(b.name));
+  const rows = shown.map((f) => {
+    const has = _photoState.get(f.station);   // null while its load is in flight
+    const cell = has === null ? 'Loading…' : has ? MCO.escapeHTML(stamp) : 'No photo';
+    return `<tr><th scope="row">${MCO.escapeHTML(f.name)} (${MCO.escapeHTML(f.station)})</th>` +
+      `<td>${MCO.escapeHTML(dirLabel)}</td>` +
+      `<td>${cell}</td></tr>`;
+  }).join('');
+  srTableEl.innerHTML =
+    '<caption>Montana Mesonet station photos currently shown on the map</caption>' +
+    '<thead><tr><th scope="col">Station</th><th scope="col">Camera direction</th>' +
+    '<th scope="col">Photo (Mountain Time)</th></tr></thead>' +
+    `<tbody>${rows}</tbody>`;
+}
+
+// Announce the mosaic's contents. Deduped against the last announcement so a
+// theme switch (which re-adds layers and re-renders) stays silent.
+function announceMosaic() {
+  const total = _photoState.size;
+  const withPhoto = [..._photoState.values()].filter(Boolean).length;
+  const msg = total === 0
+    ? `No station photos available for ${formatDisplayTimestamp(getSelectedDateTime())}.`
+    : `${withPhoto} of ${total} stations showing ${DIR_LABELS[currentDir] || currentDir} photos ` +
+      `for ${formatDisplayTimestamp(getSelectedDateTime())}.`;
+  if (msg === _lastAnnounced) return;
+  _lastAnnounced = msg;
+  live.announce(msg);
+}
+
+// ── Hover + click interaction ─────────────────────────────────────────────────
+function clearHover() {
+  map.getCanvas().style.cursor = '';
+  if (_hoveredId !== null) { map.setFeatureState({ source: 'cells', id: _hoveredId }, { hover: false }); _hoveredId = null; }
+  hideTooltip();
+}
+map.on('mousemove', (e) => {
+  const feats = map.getLayer('cells-fill') ? map.queryRenderedFeatures(e.point, { layers: ['cells-fill'] }) : [];
+  const f = feats[0] || null;
+  if (f) {
+    map.getCanvas().style.cursor = 'pointer';
+    if (_hoveredId !== null && _hoveredId !== f.id) map.setFeatureState({ source: 'cells', id: _hoveredId }, { hover: false });
+    _hoveredId = f.id;
+    map.setFeatureState({ source: 'cells', id: _hoveredId }, { hover: true });
+    showTooltip(e.originalEvent, f.properties.name);
+  } else if (_hoveredId !== null) {
+    clearHover();
+  }
+});
+map.getCanvas().addEventListener('mouseleave', clearHover);
+
+map.on('click', (e) => {
+  const feats = map.getLayer('cells-fill') ? map.queryRenderedFeatures(e.point, { layers: ['cells-fill'] }) : [];
+  if (feats.length) openModalByStation(feats[0].properties.station);
+});
+
+function showTooltip(ev, text) {
+  tooltipEl.textContent = text;
+  tooltipEl.classList.add("visible");
+  tooltipEl.style.left = `${ev.clientX + 14}px`;
+  tooltipEl.style.top  = `${ev.clientY + 14}px`;
+}
+function hideTooltip() { tooltipEl.classList.remove("visible"); }
+
+// ── Search ────────────────────────────────────────────────────────────────────
+// App-local by design: the kit has deliberately not absorbed the search
+// combobox yet (MIGRATING.md § kit-deferred).
+let _activeSearchIndex = -1;
+
+function matchScore(s, q) {
+  const n = s.name.toLowerCase(), id = s.station.toLowerCase();
+  if (n === q || id === q) return 0;
+  if (n.startsWith(q))     return 1;
+  if (id.startsWith(q))    return 2;
+  if (n.includes(q))       return 3;
+  if (id.includes(q))      return 4;
+  return Infinity;
+}
+function showSearchDropdown(rawQuery) {
+  const q = rawQuery.trim().toLowerCase();
+  if (!q) { hideSearchDropdown(); return; }
+  const matches = _stationsList
+    .map(s => ({ s, score: matchScore(s, q) }))
+    .filter(m => m.score < Infinity)
+    .sort((a, b) => a.score - b.score || a.s.name.localeCompare(b.s.name))
+    .slice(0, SEARCH_MAX_RESULTS)
+    .map(m => m.s);
+  searchDropdown.innerHTML = '';
+  if (matches.length === 0) {
+    const li = document.createElement('li');
+    li.className = 'empty';
+    li.setAttribute('aria-disabled', 'true');
+    li.textContent = `No stations match "${rawQuery.trim()}"`;
+    searchDropdown.appendChild(li);
+    searchDropdown.hidden = false;
+    searchInput.setAttribute('aria-expanded', 'true');
+    _activeSearchIndex = -1;
+    return;
+  }
+  for (const s of matches) {
+    const li = document.createElement('li');
+    li.setAttribute('role', 'option');
+    li.dataset.stationId = s.station;
+    li.id = `search-opt-${s.station}`;
+    const name = document.createElement('span');
+    name.className = 'search-name';
+    name.textContent = s.name;
+    const meta = document.createElement('span');
+    meta.className = 'search-meta';
+    meta.textContent = s.station;
+    li.append(name, meta);
+    li.addEventListener('mousedown', (e) => { e.preventDefault(); selectStation(s.station); });
+    searchDropdown.appendChild(li);
+  }
+  searchDropdown.hidden = false;
+  searchInput.setAttribute('aria-expanded', 'true');
+  _activeSearchIndex = -1;
+  searchInput.removeAttribute('aria-activedescendant');
+}
+function hideSearchDropdown() {
+  searchDropdown.hidden = true;
+  searchInput.setAttribute('aria-expanded', 'false');
+  _activeSearchIndex = -1;
+  searchInput.removeAttribute('aria-activedescendant');
+}
+function selectStation(stationId) {
+  hideSearchDropdown();
+  searchInput.value = '';
+  // Focus stays on the search box: it becomes the gallery's opener, so closing
+  // the dialog returns the keyboard user to where they were.
+  flyToAndOpen(stationId, searchInput);
+}
+function setActiveSearchItem(idx) {
+  const items = searchDropdown.querySelectorAll('li');
+  if (!items.length) return;
+  if (idx < 0) idx = items.length - 1;
+  if (idx >= items.length) idx = 0;
+  _activeSearchIndex = idx;
+  items.forEach((it, i) => it.classList.toggle('active', i === idx));
+  items[idx].scrollIntoView({ block: 'nearest' });
+  searchInput.setAttribute('aria-activedescendant', items[idx].id);
+}
+searchInput.addEventListener('input', () => showSearchDropdown(searchInput.value));
+searchInput.addEventListener('focus', () => { if (searchInput.value) showSearchDropdown(searchInput.value); });
+searchInput.addEventListener('blur',  () => setTimeout(hideSearchDropdown, 120));
+searchInput.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape') { searchInput.value = ''; hideSearchDropdown(); return; }
+  if (searchDropdown.hidden) return;
+  const items = searchDropdown.querySelectorAll('li');
+  if (!items.length) return;
+  if (e.key === 'ArrowDown') { e.preventDefault(); setActiveSearchItem(_activeSearchIndex + 1); }
+  else if (e.key === 'ArrowUp') { e.preventDefault(); setActiveSearchItem(_activeSearchIndex - 1); }
+  else if (e.key === 'Enter') {
+    e.preventDefault();
+    const idx = _activeSearchIndex >= 0 ? _activeSearchIndex : 0;
+    if (items[idx].dataset.stationId) selectStation(items[idx].dataset.stationId);
+  }
+});
+
+function flyToAndOpen(stationId, opener) {
+  const f = _featureByStation.get(stationId);
+  if (!f) { MCO.showToast('Station not found'); return; }
+  map.flyTo({ center: f.centroid, zoom: SEARCH_FLY_ZOOM, speed: SEARCH_FLY_SPEED,
+              animate: !MCO.reducedMotion() });
+  map.once('moveend', () => openModalByStation(stationId, opener));
+}
+
+// ── Photo gallery modal + lightbox ────────────────────────────────────────────
+// Focus restore: capture the opener and hand focus back to it on close. A
+// deep-linked open has no real opener, so focus falls back to <main> rather
+// than being dropped on <body>.
+function restoreFocus(el) {
+  if (el && el.isConnected && el !== document.body && typeof el.focus === 'function') { el.focus(); return; }
+  if (mainEl) mainEl.focus();
+}
+
+let _galleryOpener = null;
+function openModalByStation(stationId, opener) {
+  const f = _featureByStation.get(stationId);
+  if (!f) return;
+  const dtStr = getSelectedDateTime();
+
+  document.getElementById("modal-station-name").textContent = f.name;
+  document.getElementById("modal-timestamp").textContent    = formatDisplayTimestamp(dtStr);
+
+  const dashWrap = document.getElementById("modal-dash-link");
+  dashWrap.innerHTML = "";
+  const dashLink = document.createElement("a");
+  dashLink.href = DASH_URL(stationId);
+  dashLink.target = "_blank";
+  dashLink.rel = "noopener";
+  dashLink.textContent = `Open ${f.name} dashboard →`;
+  dashWrap.append(dashLink);
+
+  const grid = document.getElementById("photo-grid");
+  grid.innerHTML = "";
+  const dateStr   = dateInput.value;
+  const validDirs = DIR_ORDER.filter(dir => isValidForDate(stationId, dir, dateStr));
+  if (validDirs.length === 0) {
+    const msg = document.createElement("p");
+    msg.className = "photo-empty";
+    msg.textContent = "No photos available for this station on the selected date.";
+    grid.append(msg);
+  }
+  validDirs.forEach(dir => {
+    const dirLabel = DIR_LABELS[dir] || dir;
+    const card = document.createElement("div");
+    card.className = "photo-card";
+    // A real <button>, not a click handler on the <img>: the enlarge gesture
+    // needs a keyboard twin and a focus target (HOUSE-STYLE §5.8).
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "photo-btn";
+    btn.setAttribute("aria-label", `${dirLabel} view of ${f.name} — enlarge`);
+    const img = document.createElement("img");
+    img.alt = "";
+    img.src = photoUrl(stationId, dtStr, dir);
+    img.loading = "lazy";
+    img.addEventListener("error", () => card.remove());
+    btn.addEventListener("click", () => openLightbox(
+      rawPhotoUrl(stationId, dtStr, dir),
+      `${f.name} · ${formatDisplayTimestamp(dtStr)} · ${dirLabel}`,
+      btn
+    ));
+    btn.append(img);
+    const label = document.createElement("div");
+    label.className = "photo-dir-label";
+    label.textContent = dirLabel;
+    card.append(btn, label);
+    grid.append(card);
+  });
+
+  _galleryOpener = opener || document.activeElement;
+  _selectedStation = stationId;
+  updateUrl();
+  modal.showModal();
+  document.getElementById("modal-close").focus();
+  live.announce(validDirs.length
+    ? `Photo gallery for ${f.name} opened, ${validDirs.length} photos.`
+    : `Photo gallery for ${f.name} opened, no photos for this date.`);
+}
+// One close path for the button, Esc and backdrop click alike.
+modal.addEventListener("close", () => {
+  _selectedStation = null;
+  updateUrl();
+  restoreFocus(_galleryOpener);
+  _galleryOpener = null;
+});
+document.getElementById("modal-close").addEventListener("click", () => modal.close());
+modal.addEventListener("click", (e) => { if (e.target === modal) modal.close(); });
+
+const lightboxImg     = document.getElementById("lightbox-img");
+const lightboxCaption = document.getElementById("lightbox-caption");
+let _lightboxOpener = null;
+function openLightbox(url, caption, opener) {
+  lightboxImg.src = url;
+  lightboxImg.alt = caption;
+  lightboxCaption.textContent = caption;
+  _lightboxOpener = opener || document.activeElement;
+  lightbox.showModal();
+}
+lightbox.addEventListener("close", () => {
+  lightboxImg.src = BLANK_IMG;   // not "" — that re-requests the page itself
+  restoreFocus(_lightboxOpener);
+  _lightboxOpener = null;
+});
+document.getElementById("lightbox-close").addEventListener("click", () => lightbox.close());
+lightbox.addEventListener("click", (e) => { if (e.target === lightbox) lightbox.close(); });
+
+// ── Info modal ────────────────────────────────────────────────────────────────
+MCO.initInfoModal({ dialog: infoModal, trigger: document.getElementById("btn-info") });
+// First-visit auto-open, suppressed over deep links (someone following a shared
+// URL shouldn't land behind a help dialog) and in headless export runs. The
+// seen flag is written at OPEN time so an unclosed dialog still counts.
+const DEEP_LINK_PARAMS = ['station', 'date', 'time', 'dir', 'overlay', 'lng', 'export'];
+const hasDeepLink = DEEP_LINK_PARAMS.some((k) => urlParams.has(k));
+const seenIntro = MCO.lsGet(LS_SEEN) === '1' || MCO.lsGet(LS_SEEN_OLD) === '1';
+if (!seenIntro && !hasDeepLink) {
+  setTimeout(() => {
+    if (!infoModal.open && !modal.open) infoModal.showModal();
+    MCO.lsSet(LS_SEEN, '1');
+  }, 350);
+}
+
+// ── Date / time controls ──────────────────────────────────────────────────────
+dateInput.addEventListener("change", () => { clampDate(); updateUrl(); refreshMapImages(); });
+timeInput.addEventListener("change", () => { clampDate(); updateUrl(); refreshMapImages(); });
+
+// Clamp date to [min, max] and time to the latest available slot on the latest date.
+function clampDate() {
+  if (dateInput.min && dateInput.value < dateInput.min) {
+    dateInput.value = dateInput.min;
+    MCO.showToast(`Photos begin ${dateInput.min} — date adjusted.`);
+    return true;
+  }
+  if (dateInput.max && dateInput.value > dateInput.max) {
+    dateInput.value = dateInput.max;
+    MCO.showToast("Date is in the future — adjusted to today.");
+    return true;
+  }
+  const maxTs = computeMaxTimestep();
+  if (dateInput.value === maxTs.date && timeInput.value > maxTs.time) {
+    timeInput.value = maxTs.time;
+    MCO.showToast("Time not yet available — adjusted to latest.");
+    return true;
+  }
+  return false;
+}
+function stepDate(delta) {
+  const newDate = shiftDate(dateInput.value, delta);
+  if (delta < 0 && dateInput.min && newDate < dateInput.min) { MCO.showToast("Already at the earliest available date."); return false; }
+  if (delta > 0 && newDate > computeMaxTimestep(0).date)      { MCO.showToast("Already at the most recent available date."); return false; }
+  dateInput.value = newDate;
+  clampDate();
+  updateUrl();
+  return true;
+}
+let _holdTimer = null, _holdInterval = null;
+function startHold(delta) {
+  if (!stepDate(delta)) return;
+  _holdTimer = setTimeout(() => {
+    _holdInterval = setInterval(() => { if (!stepDate(delta)) stopHold(); }, 120);
+  }, 450);
+}
+function stopHold() {
+  if (_holdTimer === null && _holdInterval === null) return;
+  clearTimeout(_holdTimer); clearInterval(_holdInterval);
+  _holdTimer = null; _holdInterval = null;
+  refreshMapImages();
+}
+const _btnDatePrev = document.getElementById("btn-date-prev");
+const _btnDateNext = document.getElementById("btn-date-next");
+_btnDatePrev.addEventListener("mousedown",  (e) => { e.preventDefault(); startHold(-1); });
+_btnDateNext.addEventListener("mousedown",  (e) => { e.preventDefault(); startHold(+1); });
+_btnDatePrev.addEventListener("touchstart", (e) => { e.preventDefault(); startHold(-1); }, { passive: false });
+_btnDateNext.addEventListener("touchstart", (e) => { e.preventDefault(); startHold(+1); }, { passive: false });
+_btnDatePrev.addEventListener("keydown", (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); if (stepDate(-1)) refreshMapImages(); } });
+_btnDateNext.addEventListener("keydown", (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); if (stepDate(+1)) refreshMapImages(); } });
+document.addEventListener("mouseup", stopHold);
+document.addEventListener("touchend", stopHold);
+document.addEventListener("touchcancel", stopHold);
+
+// ── Boundaries toggle (county lines + tribal nations, together) ───────────────
+const BOUNDARY_LAYERS = ["counties-line", "tribal-fill", "tribal-line", "tribal-label"];
+const btnCounties = document.getElementById("btn-counties");
+btnCounties.setAttribute("aria-pressed", showCounties ? "true" : "false");
+btnCounties.addEventListener("click", () => {
+  showCounties = !showCounties;
+  btnCounties.setAttribute("aria-pressed", showCounties ? "true" : "false");
+  MCO.lsSet(LS_COUNTIES, showCounties ? "1" : "0");
+  const vis = showCounties ? "visible" : "none";
+  for (const lid of BOUNDARY_LAYERS) {
+    if (map.getLayer(lid)) map.setLayoutProperty(lid, "visibility", vis);
+  }
+  updateUrl();
+});
+
+// ── Share ─────────────────────────────────────────────────────────────────────
+// Copy the current (deep-link) URL. Uses the async Clipboard API where available,
+// with an execCommand fallback, and always surfaces a toast so the click has
+// visible feedback even if the clipboard is blocked.
+async function copyShareLink() {
+  const url = location.href;
+  try {
+    if (navigator.clipboard && window.isSecureContext) {
+      await navigator.clipboard.writeText(url);
+      MCO.showToast("Link copied to clipboard!");
+      return;
+    }
+  } catch { /* fall through to the execCommand fallback */ }
+  try {
+    const ta = document.createElement("textarea");
+    ta.value = url;
+    ta.style.cssText = "position:fixed;top:0;left:0;opacity:0";
+    document.body.appendChild(ta);
+    ta.focus(); ta.select();
+    const ok = document.execCommand("copy");
+    document.body.removeChild(ta);
+    MCO.showToast(ok ? "Link copied to clipboard!" : "Copy this link: " + url, ok ? undefined : 6000);
+  } catch {
+    MCO.showToast("Copy this link: " + url, 6000);
+  }
+}
+document.getElementById("btn-share").addEventListener("click", copyShareLink);
+
+// ── Global keyboard shortcuts ─────────────────────────────────────────────────
+// Single-character shortcuts are gated by ?kbd=off (WCAG 2.1.4). Esc is not a
+// printable character, so the dialogs' native Esc handling stays live either way.
+window.addEventListener("keydown", (e) => {
+  if (!kbdShortcuts) return;
+  if (e.key === '/' && !e.metaKey && !e.ctrlKey && !e.altKey) {
+    const t = e.target;
+    if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.tagName === 'SELECT' || t.isContentEditable)) return;
+    e.preventDefault();
+    searchInput.focus();
+    searchInput.select();
+  }
+});
+
+// ── URL sync & social meta ────────────────────────────────────────────────────
+function updateSocialMeta() {
+  const dirLabel = DIR_LABELS[currentDir] || currentDir;
+  const dateFmt = MCO.formatDateStr(dateInput.value);
+  const [h, m] = timeInput.value.split(":").map(Number);
+  const timeFmt = `${h % 12 || 12}:${MCO.pad2(m)} ${h >= 12 ? "PM" : "AM"} MT`;
+  const title = `Montana Mesonet Photos · ${dateFmt} · ${timeFmt} · ${dirLabel}`;
+  const desc  = `Montana weather station photos for ${dateFmt} at ${timeFmt}, ${dirLabel} direction. ` +
+                `A service of the Montana Climate Office.`;
+  document.title = title;
+  const previewUrl = new URL("preview.png", location.href).href;
+  const set = (sel, content) => document.querySelector(sel)?.setAttribute("content", content);
+  set('meta[property="og:title"]', title);
+  set('meta[property="og:description"]', desc);
+  set('meta[property="og:url"]', location.href);
+  set('meta[property="og:image"]', previewUrl);
+  set('meta[name="twitter:title"]', title);
+  set('meta[name="twitter:description"]', desc);
+  set('meta[name="twitter:image"]', previewUrl);
+  set('meta[name="description"]', desc);
+}
+// Mirror state into the query string (HOUSE-STYLE §4). Defaults are elided —
+// except date and time, which are always emitted on purpose: their "default"
+// is the latest available timestep, so a link without them would show a
+// different view tomorrow.
+function updateUrl() {
+  const params = { date: dateInput.value, time: parseInt(timeInput.value) };
+  if (currentDir !== DEFAULT_DIR) params.dir = currentDir;
+  if (showCounties) params.overlay = "counties";
+  const theme = MCO.getTheme();
+  if (theme) params.theme = theme;
+  if (_mapReady && map) Object.assign(params, MCO.map.cameraParams(map));
+  if (_selectedStation) params.station = _selectedStation;
+  if (!kbdShortcuts) params.kbd = 'off';   // preserve the a11y opt-out across navigation
+  MCO.replaceUrlState(params);
+  updateSocialMeta();
+}
+
+// ── Export (PNG with MCO branding) ────────────────────────────────────────────
+// App-local: the kit has no export module yet (MIGRATING.md § kit-deferred).
+// Renders a fixed EXPORT_W×EXPORT_H MapLibre map off-screen so the output is
+// identical regardless of the live viewport, composites the MCO logo, and
+// downloads. ?export=1|light|dark drives this for the social-preview generator.
+document.getElementById("btn-export").addEventListener("click", exportPNG);
+
+async function exportPNG() {
+  if (!_activeFeatures.length) { MCO.showToast("Map not loaded yet."); return; }
+  MCO.showToast("Exporting…");
+  const W = EXPORT_W, H = EXPORT_H;
+
+  const holder = document.createElement('div');
+  holder.style.cssText = `position:fixed;left:-99999px;top:0;width:${W}px;height:${H}px;pointer-events:none;`;
+  document.body.appendChild(holder);
+
+  const xm = new maplibregl.Map({
+    container: holder,
+    style: MCO.map.cartoStyleUrl(),
+    bounds: MCO.map.MT_FIT_BOUNDS,
+    fitBoundsOptions: MCO.map.FIT_OPTS,
+    interactive: false,
+    attributionControl: false,
+    preserveDrawingBuffer: true,   // required for getCanvas() readback
+    pixelRatio: EXPORT_SCALE,      // render at 2× for a high-resolution PNG
+    fadeDuration: 0,
+  });
+
+  try {
+    await once(xm, 'load');
+    const dt = getSelectedDateTime();
+    const dateStr = dateInput.value;
+    const valid = _activeFeatures.filter(f => isValidForDate(f.station, currentDir, dateStr));
+    const paints = MCO.map.overlayPaints();
+
+    if (xm.getLayer('boundary_county')) xm.setLayoutProperty('boundary_county', 'visibility', 'none');
+
+    // Montana boundary frame below the photos
+    xm.addSource('state', { type: 'geojson', data: _stateFC || 'data/mt_state_simple.geojson' });
+    xm.addLayer({ id: 'state-line', type: 'line', source: 'state',
+                  layout: { 'line-join': 'round', 'line-cap': 'round' }, paint: paints.stateLine });
+
+    // Photos (awaited so the map is complete before capture)
+    const crops = await Promise.all(valid.map(f => loadCrop(photoUrl(f.station, dt, currentDir))));
+    valid.forEach((f, i) => {
+      if (!crops[i]) return;
+      const sid = 'photo-' + f.station;
+      xm.addSource(sid, { type: 'image', url: crops[i], coordinates: f.coords });
+      xm.addLayer({ id: sid, type: 'raster', source: sid,
+                    paint: { 'raster-fade-duration': 0, 'raster-resampling': 'linear' } });
+    });
+
+    // Boundary overlays lightly over the photos — only when the toggle is on.
+    if (showCounties) {
+      xm.addSource('counties', { type: 'geojson', data: _countiesFC || 'data/mt_counties_simple.geojson' });
+      xm.addSource('tribal',   { type: 'geojson', data: _tribalFC   || 'data/mt_reservations_simple.geojson' });
+      xm.addLayer({ id: 'counties-line', type: 'line', source: 'counties', paint: paints.countiesLine });
+      xm.addLayer({ id: 'tribal-fill',   type: 'fill', source: 'tribal',   paint: tribalFillPaint() });
+      xm.addLayer({ id: 'tribal-line',   type: 'line', source: 'tribal',   paint: paints.tribalLine });
+    }
+
+    // Cell borders on top
+    const validIds = valid.map(f => f.station);
+    xm.addSource('cells', { type: 'geojson', data: _cellsFC });
+    xm.addLayer({ id: 'cells-outline', type: 'line', source: 'cells',
+                  filter: ['in', ['get', 'station'], ['literal', validIds]],
+                  paint: { 'line-color': cssVar('--border', '#3a4558'), 'line-width': 0.8, 'line-opacity': 0.9 } });
+
+    // Reservation labels on top — only when the toggle is on.
+    if (showCounties) {
+      xm.addLayer({ id: 'tribal-label', type: 'symbol', source: 'tribal', minzoom: 0,
+                    layout: MCO.map.TRIBAL_LABEL_LAYOUT, paint: paints.tribalLabelPaint });
+    }
+
+    await once(xm, 'idle');
+
+    const mc = xm.getCanvas();
+    const canvas = document.createElement('canvas');
+    canvas.width = mc.width; canvas.height = mc.height;   // 2× via pixelRatio
+    const ctx = canvas.getContext('2d');
+    ctx.drawImage(mc, 0, 0);
+    // Draw the branding card in logical (EXPORT_W×EXPORT_H) coords, scaled up so
+    // its text/shapes stay crisp at the higher output resolution.
+    ctx.save();
+    ctx.scale(canvas.width / W, canvas.height / H);
+    await drawBranding(ctx, W, H);
+    ctx.restore();
+
+    canvas.toBlob((blob) => {
+      if (!blob) { MCO.showToast("Export failed."); return; }
+      const url = URL.createObjectURL(blob);
+      const a = Object.assign(document.createElement("a"), {
+        href: url, download: `mesonet-photos-${dt.slice(0, 10)}-${currentDir}.png`,
+      });
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+      MCO.showToast("Exported!");
+    }, "image/png");
+  } catch (err) {
+    console.error(err);
+    MCO.showToast("Export failed.");
+  } finally {
+    xm.remove();
+    holder.remove();
+  }
+}
+
+function loadImg(url) {
+  return new Promise((res) => {
+    const i = new Image();
+    i.crossOrigin = "anonymous";
+    i.onload = () => res(i);
+    i.onerror = () => res(null);
+    i.src = url;
+  });
+}
+function roundRectPath(ctx, x, y, w, h, r) {
+  if (ctx.roundRect) { ctx.roundRect(x, y, w, h, r); return; }
+  ctx.moveTo(x + r, y);
+  ctx.arcTo(x + w, y,     x + w, y + h, r);
+  ctx.arcTo(x + w, y + h, x,     y + h, r);
+  ctx.arcTo(x,     y + h, x,     y,     r);
+  ctx.arcTo(x,     y,     x + w, y,     r);
+  ctx.closePath();
+}
+// Branding card in the lower-left corner (over the basemap). Canvas can't read
+// custom properties, so the tokens are resolved here (MIGRATING.md § gotchas).
+async function drawBranding(ctx, W, H) {
+  const cs = getComputedStyle(document.documentElement);
+  const bgSurface = cs.getPropertyValue("--bg-surface").trim();
+  const borderClr = cs.getPropertyValue("--border").trim();
+  const accentLn  = cs.getPropertyValue("--accent-line").trim();
+  const textMuted = cs.getPropertyValue("--text-muted").trim();
+  const fontUi    = cs.getPropertyValue("--font-ui").trim() || "system-ui, sans-serif";
+
+  const BRAND_W = 280, BRAND_BOX_H = 80;
+  const BX = 24, BY = H - 24 - BRAND_BOX_H, PAD = 12, LOGO = 52;
+  const LX = BX + PAD, LY = BY + (BRAND_BOX_H - LOGO) / 2;
+
+  ctx.save();
+  ctx.globalAlpha = 0.88;
+  ctx.fillStyle = bgSurface;
+  ctx.beginPath(); roundRectPath(ctx, BX, BY, BRAND_W, BRAND_BOX_H, 10); ctx.fill();
+  ctx.globalAlpha = 0.5;
+  ctx.strokeStyle = borderClr; ctx.lineWidth = 1; ctx.stroke();
+  ctx.restore();
+
+  const logoImg = await loadImg(LOGO_URL);
+  if (logoImg) {
+    ctx.save();
+    ctx.beginPath(); roundRectPath(ctx, LX, LY, LOGO, LOGO, 8); ctx.clip();
+    ctx.drawImage(logoImg, LX, LY, LOGO, LOGO);
+    ctx.restore();
+  }
+
+  const TX = LX + LOGO + 10, TW = BX + BRAND_W - PAD - TX, midY = BY + BRAND_BOX_H / 2;
+  ctx.textBaseline = "middle";
+  ctx.fillStyle = accentLn;
+  ctx.font = `700 13px ${fontUi}`;
+  ctx.fillText("Mesonet Photo Explorer", TX, midY - 14, TW);
+  ctx.fillStyle = textMuted;
+  ctx.font = `400 11px ${fontUi}`;
+  ctx.fillText("Montana Climate Office", TX, midY, TW);
+  ctx.fillText(`${formatDisplayTimestamp(getSelectedDateTime())} · ${DIR_LABELS[currentDir] || currentDir}`, TX, midY + 13, TW);
+  ctx.textAlign = "right";
+  ctx.font = `italic 10px ${fontUi}`;
+  ctx.fillText("climate.umt.edu", BX + BRAND_W - PAD, BY + BRAND_BOX_H - 7);
+  ctx.textAlign = "left";
+  ctx.textBaseline = "alphabetic";
+}
+})();

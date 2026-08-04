@@ -9,6 +9,18 @@
 # Local photo mirror cache (can be large — do not commit)
 cache/
 
+# Python bytecode
+__pycache__/
+
+# Ephemeral verification tooling (mco-web-style MIGRATING.md § verification).
+# Installed with `npm i --no-save playwright @axe-core/playwright`; never a
+# runtime dependency of the app.
+node_modules/
+package.json
+package-lock.json
+consumer-verify.mjs
+verify-out/
+
 # Terraform
 terraform/.terraform/
 terraform/.terraform.lock.hcl
