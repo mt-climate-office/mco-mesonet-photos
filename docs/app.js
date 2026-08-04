@@ -30,6 +30,18 @@ const SEARCH_FLY_ZOOM    = 8.5;
 const SEARCH_FLY_SPEED   = 1.4;
 const SEARCH_MAX_RESULTS = 8;
 
+// Landing-slot fallback. computeMaxTimestep assumes a flat processing lag, but
+// the mirror job publishes ~12×/day, so the newest expected slot is empty right
+// after it turns over and then fills in gradually. Probe a spread sample of
+// stations and pick the newest slot that is actually worth showing.
+const SLOT_PROBE_SAMPLE = 12;   // stations probed per candidate slot
+// A settled slot measures ~83% present (the remaining cameras are simply
+// offline); a mid-mirror slot was observed climbing 0% → 50% → 59% over a few
+// minutes. So "most of the sample" separates a finished slot from a partial one
+// without needing to know how many cameras are live.
+const SLOT_ACCEPT_RATIO = 0.6;
+const SLOT_FALLBACK_MAX = 4;    // slots to walk back (≈2 days at 2 slots/day)
+
 // localStorage (HOUSE-STYLE §4: app-private keys are mco-<app>-* prefixed and
 // re-validated on read). LEGACY_SEEN_KEY was unprefixed before the kit
 // migration — read-old/write-new so returning visitors don't re-see the intro.
@@ -99,6 +111,10 @@ const getLower  = (k) => MCO.getParamLower(k, urlParams);
 
 const _initStation = getLower('station');
 
+// An explicit slot — a deep link, a shared URL, the export job — is never
+// silently moved by the landing-slot fallback below.
+const _slotPinnedByUrl = urlParams.has('date') || urlParams.has('time');
+
 // Single-character shortcuts need an opt-out (WCAG 2.1.4). Re-emitted on
 // replaceState so it sticks while browsing, but excluded from shared links.
 const kbdShortcuts = getLower('kbd') !== 'off';
@@ -122,6 +138,26 @@ function computeMaxTimestep(lagMinutes = 30) {
     if (+h * 60 + +m <= thresh) return { date: today, time: times[i] };
   }
   return { date: shiftDate(today, -1), time: times[times.length - 1] };
+}
+
+// The slot immediately before {dateStr, timeStr}: the previous time option, or
+// the last option of the previous day.
+function previousSlot(dateStr, timeStr) {
+  const times = [...timeInput.options].map(o => o.value);
+  const i = times.indexOf(timeStr);
+  if (i > 0)  return { date: dateStr, time: times[i - 1] };
+  if (i === 0) return { date: shiftDate(dateStr, -1), time: times[times.length - 1] };
+  return null;   // unknown time value — don't guess
+}
+
+// Evenly-spaced sample, so a probe can't land entirely in one corner of the
+// state (the mirror publishes per station, and outages can be regional).
+function pickSpread(arr, n) {
+  if (arr.length <= n) return arr.slice();
+  const step = arr.length / n;
+  const out = [];
+  for (let i = 0; i < n; i++) out.push(arr[Math.floor(i * step)]);
+  return out;
 }
 
 function getSelectedDateTime() { return `${dateInput.value}T${timeInput.value}`; }
@@ -219,8 +255,56 @@ MCO.initThemeToggle({
   },
 });
 
+// Walk back from the computed latest slot to the newest one that actually has
+// photos, so the app never lands on a blank mosaic just because the mirror job
+// hasn't published the current slot yet. Runs BEFORE the layers are added, so
+// the mosaic paints once at the right slot instead of flashing empty. Probed
+// crops land in _cropCache, so the render reuses them rather than refetching.
+async function resolveInitialTimestep() {
+  if (_slotPinnedByUrl || !_activeFeatures.length) return;
+  const startDate = dateInput.value, startTime = timeInput.value;
+  let date = startDate, time = startTime;
+  let best = null;   // { date, time, hits } — newest wins ties
+
+  for (let step = 0; step <= SLOT_FALLBACK_MAX; step++) {
+    const valid = _activeFeatures.filter(f => isValidForDate(f.station, currentDir, date));
+    if (valid.length) {
+      const sample = pickSpread(valid, SLOT_PROBE_SAMPLE);
+      const crops = await Promise.all(
+        sample.map(f => loadCrop(photoUrl(f.station, `${date}T${time}`, currentDir))));
+      const hits = crops.filter(Boolean).length;
+      // Good enough to show as-is — stop probing.
+      if (hits >= Math.ceil(sample.length * SLOT_ACCEPT_RATIO)) {
+        best = { date, time, hits };
+        break;
+      }
+      // Otherwise keep looking: a half-published newest slot should lose to a
+      // complete older one, but still beat showing nothing at all.
+      if (!best || hits > best.hits) best = { date, time, hits };
+    }
+    const prev = previousSlot(date, time);
+    if (!prev || (dateInput.min && prev.date < dateInput.min)) break;
+    date = prev.date; time = prev.time;
+  }
+
+  // Nothing anywhere in range: keep the computed latest slot so the controls
+  // still read "now", and let the empty state (and the sr-table's "No photo"
+  // rows) speak for themselves.
+  if (!best || !best.hits) return;
+  if (best.date === startDate && best.time === startTime) return;
+
+  dateInput.value = best.date;
+  timeInput.value = best.time;
+  if (!_exportParam) {
+    MCO.showToast(
+      `Showing photos from ${formatDisplayTimestamp(`${best.date}T${best.time}`)} — the most recent available.`,
+      5000);
+  }
+}
+
 map.on('load', async () => {
   await loadData();
+  await resolveInitialTimestep();
   addCustomLayers();
   zoomFloor.refresh();
   _mapReady = true;

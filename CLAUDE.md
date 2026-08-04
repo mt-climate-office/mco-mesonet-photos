@@ -23,6 +23,24 @@ Marked kit-overrides in this app:
 - Navbar wraps at ≤750px (rather than shedding the brand) and lifts `.nav-meta`
   beside the brand there, so keeping the brand costs no extra navbar height.
 
+## Landing-slot fallback
+
+`computeMaxTimestep` assumes a flat 30-minute processing lag, but the mirror job
+publishes ~12×/day — so the newest expected slot is empty right after it turns
+over and then fills in gradually (observed climbing 0% → 50% → 75% over minutes;
+a settled slot measures ~83%, the rest being cameras that are simply offline).
+
+`resolveInitialTimestep()` therefore probes a spread sample of stations before
+the layers are added and picks the newest slot worth showing: it accepts a slot
+at ≥60% of the sample, otherwise walks back up to 4 slots and takes the most
+complete one. **It only runs when neither `?date` nor `?time` is present** — an
+explicit or shared URL is never silently moved. If a run lands on an unexpected
+date, this is why; `?date=`/`?time=` pins it.
+
+The probed crops go into `_cropCache`, so the render reuses them. `?export=`
+benefits too, which is the point: the social card used to be regenerable as a
+blank map.
+
 ## Deploying — read before you push
 
 Pushing `main` **is a production deploy, on two URLs**: GitHub Pages publishes
