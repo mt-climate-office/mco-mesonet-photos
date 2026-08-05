@@ -71,5 +71,9 @@ harness (untracked; install `playwright` + `@axe-core/playwright` with
 - `connect-src` must include `data:`: MapLibre fetches an `image` source's url,
   and every photo is a cover-cropped canvas data URL. Without it the entire
   mosaic silently fails to paint.
-- Stations with no photo at the selected timestep return **403** (not 404) from
-  CloudFront. Those console errors are expected and identical on production.
+- Stations with no photo at the selected timestep produce an error response from
+  CloudFront. Those console errors are expected and identical on production. The
+  code depends on the CDN: **404** from `data2.climate.umt.edu` (its OAC holds
+  `s3:ListBucket`, so S3 can answer `NoSuchKey`), but **403** from the old
+  photo-explorer distribution, which couldn't list and so hid existence. The
+  harness classifies them out by URL, not by status.
