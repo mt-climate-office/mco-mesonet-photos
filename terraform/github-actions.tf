@@ -20,7 +20,13 @@ resource "aws_iam_role" "github_actions" {
       }
       Condition = {
         StringLike = {
-          "token.actions.githubusercontent.com:sub" = "repo:${var.github_repo}:*"
+          # A list is an OR — the sub claim need match only one pattern. One
+          # entry normally; briefly two while a repo rename is in flight, so
+          # workflows keep authenticating under both names (github_repo_aliases).
+          "token.actions.githubusercontent.com:sub" = [
+            for repo in concat([var.github_repo], var.github_repo_aliases) :
+            "repo:${repo}:*"
+          ]
         }
         StringEquals = {
           "token.actions.githubusercontent.com:aud" = "sts.amazonaws.com"

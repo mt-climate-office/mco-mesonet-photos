@@ -32,3 +32,18 @@ variable "github_repo" {
   type        = string
   default     = "mt-climate-office/mco-mesonet-photos"
 }
+
+variable "github_repo_aliases" {
+  description = <<-EOT
+    Additional org/name values the OIDC trust should accept, for repo-rename
+    transitions: set this to the other name so workflows under both the old and
+    the new repo identity can assume the role, then empty it once the rename is
+    verified.
+
+    Keep this [] in steady state. Every entry is a name that, if someone later
+    creates a repo under it in this org, could assume this role and write to the
+    photos bucket.
+  EOT
+  type        = list(string)
+  default     = []
+}

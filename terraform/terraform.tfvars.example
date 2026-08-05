@@ -4,3 +4,6 @@ project_name   = "mco-mesonet"
 s3_bucket_name = "mco-mesonet"
 github_repo    = "mt-climate-office/mco-mesonet-photos"
 aws_account_id = "YOUR_ACCOUNT_ID"
+
+# Only non-empty during a repo rename, so the OIDC trust accepts both names.
+github_repo_aliases = []
