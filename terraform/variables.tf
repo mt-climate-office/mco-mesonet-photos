@@ -35,14 +35,23 @@ variable "github_repo" {
 
 variable "github_repo_aliases" {
   description = <<-EOT
-    Additional org/name values the OIDC trust should accept, for repo-rename
-    transitions: set this to the other name so workflows under both the old and
-    the new repo identity can assume the role, then empty it once the rename is
-    verified.
+    Additional subject identities the OIDC trust accepts, each rendered as
+    `repo:<value>:*`. Two distinct uses:
 
-    Keep this [] in steady state. Every entry is a name that, if someone later
-    creates a repo under it in this org, could assume this role and write to the
-    photos bucket.
+    1. THE IMMUTABLE SUBJECT (permanent, load-bearing). Renaming this repo on
+       2026-08-05 made GitHub switch it from the plain `org/name` subject claim
+       to an ID-embedded one — CloudTrail showed the token go from
+       `repo:mt-climate-office/mco-mesonet-photos:...` (worked) to
+       `repo:mt-climate-office@35075063/mesonet-photos@1187521045:...` (denied)
+       across the rename. Those numeric org/repo IDs never change, so trusting
+       that form is what actually makes this role survive future renames. Do not
+       remove it. Read the live value with:
+         gh api repos/mt-climate-office/mesonet-photos/actions/oidc/customization/sub
+
+    2. Rename transitions (temporary). A plain `org/name` entry, kept only until
+       a rename is verified. Drop it afterwards: any name left here could be
+       claimed by a new repo in this org, which would then be able to write to
+       the photos bucket.
   EOT
   type        = list(string)
   default     = []

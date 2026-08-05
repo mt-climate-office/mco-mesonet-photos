@@ -5,5 +5,8 @@ s3_bucket_name = "mco-mesonet"
 github_repo    = "mt-climate-office/mesonet-photos"
 aws_account_id = "YOUR_ACCOUNT_ID"
 
-# Only non-empty during a repo rename, so the OIDC trust accepts both names.
-github_repo_aliases = []
+# REQUIRED here, not optional: since this repo was renamed, GitHub mints an
+# immutable subject claim with numeric org/repo IDs instead of the plain
+# org/name, so `github_repo` alone will NOT authenticate. Get the live value:
+#   gh api repos/mt-climate-office/mesonet-photos/actions/oidc/customization/sub
+github_repo_aliases = ["mt-climate-office@ORG_ID/mesonet-photos@REPO_ID"]
