@@ -52,6 +52,26 @@ resource "aws_s3_bucket_policy" "photos" {
         }
       },
       {
+        # The data CDN's storage browser lists this bucket THROUGH the CDN
+        # (https://data2.climate.umt.edu/mesonet/?list-type=2…): the bucket is
+        # private, so the anonymous direct-S3 listing the browser uses for
+        # public buckets 403s here — instead CloudFront's OAC signs the list
+        # request, which needs this grant. The whole bucket is public-by-design
+        # behind the CDN, so listing all keys exposes nothing new.
+        Sid    = "DataCDNList"
+        Effect = "Allow"
+        Principal = {
+          Service = "cloudfront.amazonaws.com"
+        }
+        Action   = "s3:ListBucket"
+        Resource = aws_s3_bucket.photos.arn
+        Condition = {
+          StringEquals = {
+            "AWS:SourceArn" = "arn:aws:cloudfront::202533506375:distribution/E24I4W0YAJ2A27"
+          }
+        }
+      },
+      {
         # Time travel for the living archive: its tag manifests record S3
         # versionIds, and as-of reads GET data/* with ?versionId=…. Scoped to
         # data/* ONLY — noncurrent versions of photos etc. stay unreachable.
