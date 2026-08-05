@@ -14,7 +14,7 @@
 'use strict';
 
 // ── Constants ─────────────────────────────────────────────────────────────────
-const CLOUDFRONT_BASE = "https://mesonet.climate.umt.edu/data";        // processed WebP + raw JPG photos
+const CLOUDFRONT_BASE = "https://data2.climate.umt.edu/mesonet";       // processed WebP + raw JPG photos
 const PHOTOS_META     = "https://mesonet.climate.umt.edu/api/v2/photos?type=json";
 const STATIONS_META   = "https://mesonet.climate.umt.edu/api/stations?type=json";
 const STATUS_META     = "https://mesonet.climate.umt.edu/api/stations/status?type=json";
