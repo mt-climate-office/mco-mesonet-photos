@@ -19,7 +19,7 @@ from playwright.sync_api import sync_playwright
 
 DOCS = Path(__file__).parent.parent / "docs"
 OUT  = DOCS / "preview.png"
-URL  = "https://mt-climate-office.github.io/mco-mesonet-photos/"
+URL  = "https://mt-climate-office.github.io/mesonet-photos/"
 
 
 def main() -> None:

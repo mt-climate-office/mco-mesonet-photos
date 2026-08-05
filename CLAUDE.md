@@ -1,4 +1,4 @@
-# mco-mesonet-photos
+# mesonet-photos
 
 The Montana Mesonet Photo Explorer: a static MapLibre single-page app in `docs/`
 (GitHub Pages root), plus the Python photo-mirroring pipeline in `scripts/`.

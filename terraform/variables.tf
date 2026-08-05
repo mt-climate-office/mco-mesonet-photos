@@ -30,7 +30,7 @@ variable "s3_bucket_name" {
 variable "github_repo" {
   description = "GitHub repo in org/name format, used to scope the OIDC trust policy"
   type        = string
-  default     = "mt-climate-office/mco-mesonet-photos"
+  default     = "mt-climate-office/mesonet-photos"
 }
 
 variable "github_repo_aliases" {
