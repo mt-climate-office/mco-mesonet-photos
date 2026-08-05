@@ -54,10 +54,12 @@ jobs:
         run: python scripts/mirror_photos.py
 
       - name: Invalidate CloudFront manifest cache
+        # The data CDN serves this bucket under /mesonet/*, so the invalidation
+        # path carries that prefix — it is a distribution path, not an S3 key.
         run: |
           aws cloudfront create-invalidation \
             --distribution-id ${{ secrets.CLOUDFRONT_DISTRIBUTION_ID }} \
-            --paths "/photos/manifest.parquet"
+            --paths "/mesonet/photos/manifest.parquet"
 
   preview:
     name: Update social preview image

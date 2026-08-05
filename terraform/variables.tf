@@ -27,6 +27,16 @@ variable "s3_bucket_name" {
   default     = "mco-mesonet"
 }
 
+variable "data_cdn_distribution_id" {
+  description = <<-EOT
+    The MCO data CDN distribution that serves this bucket at
+    data2.climate.umt.edu/mesonet/*. Owned by the mco-data-cdn repo, so its ID is
+    supplied here rather than referenced — its Terraform state lives over there.
+  EOT
+  type        = string
+  default     = "E24I4W0YAJ2A27"
+}
+
 variable "github_repo" {
   description = "GitHub repo in org/name format, used to scope the OIDC trust policy"
   type        = string

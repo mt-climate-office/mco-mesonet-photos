@@ -46,7 +46,7 @@ resource "aws_s3_bucket_policy" "photos" {
             # hardcoded because its state lives in the other repo.
             "AWS:SourceArn" = [
               aws_cloudfront_distribution.photos.arn,
-              "arn:aws:cloudfront::202533506375:distribution/E24I4W0YAJ2A27",
+              local.data_cdn_distribution_arn,
             ]
           }
         }
@@ -67,7 +67,7 @@ resource "aws_s3_bucket_policy" "photos" {
         Resource = aws_s3_bucket.photos.arn
         Condition = {
           StringEquals = {
-            "AWS:SourceArn" = "arn:aws:cloudfront::202533506375:distribution/E24I4W0YAJ2A27"
+            "AWS:SourceArn" = local.data_cdn_distribution_arn
           }
         }
       },
@@ -84,7 +84,7 @@ resource "aws_s3_bucket_policy" "photos" {
         Resource = "${aws_s3_bucket.photos.arn}/data/*"
         Condition = {
           StringEquals = {
-            "AWS:SourceArn" = "arn:aws:cloudfront::202533506375:distribution/E24I4W0YAJ2A27"
+            "AWS:SourceArn" = local.data_cdn_distribution_arn
           }
         }
       },
