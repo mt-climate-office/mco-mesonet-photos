@@ -63,16 +63,10 @@ resource "aws_iam_role_policy" "github_actions" {
         Sid    = "CloudFrontInvalidate"
         Effect = "Allow"
         Action = "cloudfront:CreateInvalidation"
-        # Both, during the migration off the photo-explorer distribution onto the
-        # data CDN. The workflow invalidates whichever distribution its
-        # CLOUDFRONT_DISTRIBUTION_ID secret names, and a GitHub secret and an IAM
-        # policy cannot be changed atomically together — so granting only one
-        # leaves a window where a scheduled run fails. Narrow to the data CDN
-        # alone once the switch is verified.
-        Resource = [
-          aws_cloudfront_distribution.photos.arn,
-          local.data_cdn_distribution_arn,
-        ]
+        # The data CDN only. Briefly covered both distributions while the
+        # CLOUDFRONT_DISTRIBUTION_ID secret was being switched over, since a
+        # GitHub secret and an IAM policy cannot change atomically together.
+        Resource = local.data_cdn_distribution_arn
       },
     ]
   })
