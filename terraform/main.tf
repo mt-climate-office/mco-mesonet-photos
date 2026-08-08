@@ -8,13 +8,17 @@ terraform {
     }
   }
 
-  # Uncomment once the shared state bucket exists.
-  # backend "s3" {
-  #   bucket  = "mco-terraform-state"
-  #   key     = "mco-mesonet/terraform.tfstate"
-  #   region  = "us-west-2"
-  #   profile = "mco"
-  # }
+  # Shared state bucket. Key is the REPO name (mco-mesonet-photos), not the
+  # bucket name this stack manages (mco-mesonet) — the old commented key here
+  # predated the org key convention. Auth comes from the environment
+  # (AWS_PROFILE=mco locally, OIDC in CI).
+  backend "s3" {
+    bucket       = "mco-terraform-state"
+    key          = "mco-mesonet-photos/terraform.tfstate"
+    region       = "us-west-2"
+    encrypt      = true
+    use_lockfile = true
+  }
 }
 
 provider "aws" {
