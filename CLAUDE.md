@@ -65,9 +65,13 @@ There is no CI for the page. Before any push, run the manual gates from
 mco-web-style `MIGRATING.md` § "Verification recipe": `node --check docs/app.js`,
 `npx html-validate@9 docs/index.html`, and the app's `consumer-verify.mjs`
 harness (untracked; install `playwright` + `@axe-core/playwright` with
-`--no-save`). Note two gotchas that cost time here:
+`--no-save`). Gotchas that have cost time here:
 - The harness's `renderEvidence` must be a **function**, not a string — a string
   predicate is `eval`'d in-page and the CSP has no `'unsafe-eval'`.
+- Run a block's console-clean check **before** its axe run, or filter
+  `fonts.googleapis.com` out of it: axe's color-contrast rule fetches the
+  cross-origin Google Fonts stylesheet and the CSP blocks it. That error is the
+  harness, not the app.
 - `connect-src` must include `data:`: MapLibre fetches an `image` source's url,
   and every photo is a cover-cropped canvas data URL. Without it the entire
   mosaic silently fails to paint.

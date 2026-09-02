@@ -199,6 +199,9 @@
       box-shadow: var(--shadow);
     }
     .modal-header { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 1rem; gap: 1rem; }
+    /* Prev/next station arrows and the close button share a row and one
+       treatment: all three are the kit's .nav-btn.icon-only (34px). */
+    .modal-header-actions { display: flex; align-items: center; gap: 0.35rem; flex-shrink: 0; }
     .modal-station-name { font-size: 1.1rem; font-weight: 700; color: var(--accent-line); }
     .modal-timestamp { font-size: 0.75rem; color: var(--text-muted); margin-top: 0.15rem; }
 
@@ -242,6 +245,19 @@
       position: absolute; top: -2rem; right: 0; background: none; border: none;
       color: #fff; font-size: 1.75rem; line-height: 1; cursor: pointer; padding: 0 0.25rem;
     }
+    /* Station arrows pinned to the viewport edges (fixed works inside a
+       top-layer dialog). White glyph on a solid dark disc — same backdrop-only
+       rationale as the two colors above, and it stays legible where the disc
+       overlaps a bright photo on narrow screens. Already 44px (WCAG 2.5.5). */
+    .lightbox-nav {
+      position: fixed; top: 50%; transform: translateY(-50%);
+      width: 44px; height: 44px; padding: 0; border: none; border-radius: 50%;
+      background: rgba(0,0,0,0.6); color: #fff; cursor: pointer;
+      display: inline-flex; align-items: center; justify-content: center;
+    }
+    .lightbox-nav:hover { background: rgba(0,0,0,0.85); }
+    .lightbox-prev { left: 0.5rem; }
+    .lightbox-next { right: 0.5rem; }
 
     /* ── Info modal extras (shell + sections come from the kit) ────────────── */
     .info-icon { display: inline-flex; align-items: center; vertical-align: middle; margin: 0 3px 1px 0; opacity: 0.8; }
@@ -465,7 +481,7 @@
         <li><strong>Date &amp; Time</strong> — Browse any date and hour; use ▲▼ to step day by day. All times are Mountain Time.</li>
         <li><strong>Direction</strong> — Pick a camera angle to show that view across all stations at once.</li>
         <li><strong>Search</strong> — Press <kbd>/</kbd> to jump to the search box, then <kbd>↑</kbd>/<kbd>↓</kbd> + <kbd>Enter</kbd> to fly to a station and open its gallery.</li>
-        <li><strong>Click a station</strong> — Open a photo gallery for that station; click or press <kbd>Enter</kbd> on any photo to enlarge it.</li>
+        <li><strong>Click a station</strong> — Open a photo gallery for that station; click or press <kbd>Enter</kbd> on any photo to enlarge it. Use <kbd>←</kbd>/<kbd>→</kbd> (or the arrow buttons) to step through stations; swipe the enlarged photo on touch screens.</li>
         <li><strong>Zoom &amp; pan</strong> — Scroll or pinch to zoom, drag to pan; use the +/− and full-extent buttons at top-right.</li>
         <li>
           <span class="info-icon"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/></svg></span>
@@ -500,7 +516,31 @@
         <div class="modal-station-name" id="modal-station-name"></div>
         <div class="modal-timestamp"    id="modal-timestamp"></div>
       </div>
-      <button type="button" class="modal-close" id="modal-close" aria-label="Close">&times;</button>
+      <!-- Station stepping: alphabetical by id, wraps at the ends. ←/→ do the
+           same from anywhere in the dialog (app.js). -->
+      <div class="modal-header-actions">
+        <button type="button" class="nav-btn icon-only" id="btn-station-prev" aria-label="Previous station">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none"
+               stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <polyline points="15 18 9 12 15 6"/>
+          </svg>
+        </button>
+        <button type="button" class="nav-btn icon-only" id="btn-station-next" aria-label="Next station">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none"
+               stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <polyline points="9 18 15 12 9 6"/>
+          </svg>
+        </button>
+        <!-- Same .nav-btn.icon-only treatment as the arrows (not the kit's
+             .modal-close): one border token, one radius, and an SVG glyph so
+             the × centres like the chevrons instead of sitting low as text. -->
+        <button type="button" class="nav-btn icon-only" id="modal-close" aria-label="Close">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none"
+               stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
+          </svg>
+        </button>
+      </div>
     </div>
     <div class="photo-grid"    id="photo-grid"></div>
     <div class="modal-dash-link" id="modal-dash-link"></div>
@@ -509,6 +549,19 @@
 
 <dialog id="lightbox" class="mco-modal" aria-label="Full-size station photo">
   <button type="button" class="lightbox-close" id="lightbox-close" aria-label="Close">&times;</button>
+  <!-- Station stepping at the same camera direction (←/→ and swipe too; app.js). -->
+  <button type="button" class="lightbox-nav lightbox-prev" id="lightbox-prev" aria-label="Previous station">
+    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+         stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+      <polyline points="15 18 9 12 15 6"/>
+    </svg>
+  </button>
+  <button type="button" class="lightbox-nav lightbox-next" id="lightbox-next" aria-label="Next station">
+    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+         stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+      <polyline points="9 18 15 12 9 6"/>
+    </svg>
+  </button>
   <!-- 1×1 transparent placeholder: src="" would re-request the page itself. -->
   <img id="lightbox-img" alt=""
        src="data:image/gif;base64,R0lGODlhAQABAAAAACH5BAEKAAEALAAAAAABAAEAAAICTAEAOw==">

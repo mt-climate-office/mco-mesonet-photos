@@ -96,6 +96,7 @@ let _activeFeatures = [];             // [{ station, name, coords:[4×[lng,lat]]
 let _featureByStation = new Map();
 let _cellsFC = null;                  // GeoJSON FeatureCollection for the 'cells' source (numeric ids)
 let _stationsList = [];               // search index: [{ station, name }]
+let _stationOrder = [];               // station ids, alphabetical — the prev/next order in the dialogs
 let _tribalFC = null, _stateFC = null, _countiesFC = null;
 let _mapReady = false;
 let _selectedStation = null;
@@ -373,6 +374,7 @@ async function loadData() {
   _cellsFC          = { type: "FeatureCollection", features: cellFeats };
   _stationsList     = feats.map(f => ({ station: f.station, name: f.name }))
                           .sort((a, b) => a.name.localeCompare(b.name));
+  _stationOrder     = feats.map(f => f.station).sort();
 
   // Constrain the date picker to the network's first-camera date; build direction UI.
   const minDate = photosMeta.map(e => e["Photo Start Date"]).filter(Boolean).sort()[0];
@@ -805,10 +807,42 @@ function restoreFocus(el) {
   if (mainEl) mainEl.focus();
 }
 
+// Station stepping (←/→, the header and lightbox arrows, swipe in the
+// lightbox). Order is alphabetical by station id. The candidate lists are
+// recomputed per step so a date change is picked up without bookkeeping —
+// ~200 ids is trivial. The gallery includes any station with at least one
+// direction on the selected date; the lightbox holds its direction fixed and
+// skips stations that lack it.
+function galleryStations(dateStr) {
+  return _stationOrder.filter(id => DIR_ORDER.some(d => isValidForDate(id, d, dateStr)));
+}
+function lightboxStations(dir, dateStr) {
+  return _stationOrder.filter(id => isValidForDate(id, dir, dateStr));
+}
+// Wrap-around step. A current id missing from the list (the date changed under
+// it) restarts from the first entry.
+function stepIn(list, current, delta) {
+  const n = list.length;
+  if (!n) return null;
+  const i = list.indexOf(current);
+  if (i < 0) return { id: list[0], index: 0, total: n, wrapped: false };
+  const j = ((i + delta) % n + n) % n;
+  return { id: list[j], index: j, total: n, wrapped: delta > 0 ? j < i : j > i };
+}
+function stepNote(r) {
+  const wrap = !r.wrapped ? '' : r.index === 0 ? ' Wrapped to the first station.' : ' Wrapped to the last station.';
+  return ` Station ${r.index + 1} of ${r.total}.${wrap}`;
+}
+
+const photoGrid = document.getElementById("photo-grid");
 let _galleryOpener = null;
-function openModalByStation(stationId, opener) {
+
+// Fill the gallery for a station. Runs at open and on every step; it owns the
+// selected-station state and mirrors it into the URL, so a reload lands on the
+// station the user stepped to. Returns the photo count for the announcement.
+function renderGallery(stationId) {
   const f = _featureByStation.get(stationId);
-  if (!f) return;
+  if (!f) return 0;
   const dtStr = getSelectedDateTime();
 
   document.getElementById("modal-station-name").textContent = f.name;
@@ -823,16 +857,16 @@ function openModalByStation(stationId, opener) {
   dashLink.textContent = `Open ${f.name} dashboard →`;
   dashWrap.append(dashLink);
 
-  const grid = document.getElementById("photo-grid");
-  grid.innerHTML = "";
+  photoGrid.innerHTML = "";
   const dateStr   = dateInput.value;
   const validDirs = DIR_ORDER.filter(dir => isValidForDate(stationId, dir, dateStr));
-  if (validDirs.length === 0) {
+  const showEmpty = () => {
     const msg = document.createElement("p");
     msg.className = "photo-empty";
     msg.textContent = "No photos available for this station on the selected date.";
-    grid.append(msg);
-  }
+    photoGrid.append(msg);
+  };
+  if (validDirs.length === 0) showEmpty();
   validDirs.forEach(dir => {
     const dirLabel = DIR_LABELS[dir] || dir;
     const card = document.createElement("div");
@@ -842,35 +876,53 @@ function openModalByStation(stationId, opener) {
     const btn = document.createElement("button");
     btn.type = "button";
     btn.className = "photo-btn";
+    btn.dataset.dir = dir;   // focus target for the lightbox after a station step rebuilds the grid
     btn.setAttribute("aria-label", `${dirLabel} view of ${f.name} — enlarge`);
     const img = document.createElement("img");
     img.alt = "";
     img.src = photoUrl(stationId, dtStr, dir);
     img.loading = "lazy";
-    img.addEventListener("error", () => card.remove());
-    btn.addEventListener("click", () => openLightbox(
-      rawPhotoUrl(stationId, dtStr, dir),
-      `${f.name} · ${formatDisplayTimestamp(dtStr)} · ${dirLabel}`,
-      btn
-    ));
+    // A camera that was offline at this slot 404s: drop its card, and once the
+    // last one is gone say so rather than leaving a silent empty grid — stepping
+    // through stations lands here far more often than clicking the map did.
+    img.addEventListener("error", () => {
+      card.remove();
+      if (!photoGrid.querySelector(".photo-card")) showEmpty();
+    });
+    btn.addEventListener("click", () => openLightbox(stationId, dir, btn));
     btn.append(img);
     const label = document.createElement("div");
     label.className = "photo-dir-label";
     label.textContent = dirLabel;
     card.append(btn, label);
-    grid.append(card);
+    photoGrid.append(card);
   });
 
-  _galleryOpener = opener || document.activeElement;
   _selectedStation = stationId;
   updateUrl();
+  return validDirs.length;
+}
+function openModalByStation(stationId, opener) {
+  const f = _featureByStation.get(stationId);
+  if (!f) return;
+  const n = renderGallery(stationId);
+  _galleryOpener = opener || document.activeElement;
   modal.showModal();
   document.getElementById("modal-close").focus();
-  live.announce(validDirs.length
-    ? `Photo gallery for ${f.name} opened, ${validDirs.length} photos.`
+  live.announce(n
+    ? `Photo gallery for ${f.name} opened, ${n} photos.`
     : `Photo gallery for ${f.name} opened, no photos for this date.`);
 }
+// Focus stays where it is: the arrows live in the header, which isn't rebuilt.
+function stepGalleryStation(delta) {
+  const r = stepIn(galleryStations(dateInput.value), _selectedStation, delta);
+  if (!r) return;
+  const n = renderGallery(r.id);
+  live.announce(`Photo gallery for ${_featureByStation.get(r.id).name}, ${n} photos.${stepNote(r)}`);
+}
 // One close path for the button, Esc and backdrop click alike.
+// The map deliberately never moves for a station step, not even on close —
+// the user is browsing photos, not the map.
 modal.addEventListener("close", () => {
   _selectedStation = null;
   updateUrl();
@@ -879,24 +931,89 @@ modal.addEventListener("close", () => {
 });
 document.getElementById("modal-close").addEventListener("click", () => modal.close());
 modal.addEventListener("click", (e) => { if (e.target === modal) modal.close(); });
+document.getElementById("btn-station-prev").addEventListener("click", () => stepGalleryStation(-1));
+document.getElementById("btn-station-next").addEventListener("click", () => stepGalleryStation(+1));
 
 const lightboxImg     = document.getElementById("lightbox-img");
 const lightboxCaption = document.getElementById("lightbox-caption");
-let _lightboxOpener = null;
-function openLightbox(url, caption, opener) {
-  lightboxImg.src = url;
+let _lightboxOpener  = null;
+let _lightboxStation = null, _lightboxDir = null;
+let _galleryStale    = false;   // the lightbox stepped away from the station the gallery shows
+
+function showLightboxPhoto(stationId, dir) {
+  const f = _featureByStation.get(stationId);
+  const caption = `${f.name} · ${formatDisplayTimestamp(getSelectedDateTime())} · ${DIR_LABELS[dir] || dir}`;
+  lightboxImg.src = rawPhotoUrl(stationId, getSelectedDateTime(), dir);
   lightboxImg.alt = caption;
   lightboxCaption.textContent = caption;
+  _lightboxStation = stationId;
+  _lightboxDir     = dir;
+  return caption;
+}
+function openLightbox(stationId, dir, opener) {
+  showLightboxPhoto(stationId, dir);
   _lightboxOpener = opener || document.activeElement;
   lightbox.showModal();
 }
+// The gallery underneath is left alone until the lightbox closes — rebuilding
+// seven thumbnails per keypress would make stepping sluggish. Only the state
+// (selected station + URL) moves immediately.
+function stepLightboxStation(delta) {
+  const r = stepIn(lightboxStations(_lightboxDir, dateInput.value), _lightboxStation, delta);
+  if (!r) return;
+  const caption = showLightboxPhoto(r.id, _lightboxDir);
+  _selectedStation = r.id;
+  _galleryStale    = true;
+  updateUrl();
+  live.announce(`${caption}.${stepNote(r)}`);
+}
 lightbox.addEventListener("close", () => {
   lightboxImg.src = BLANK_IMG;   // not "" — that re-requests the page itself
-  restoreFocus(_lightboxOpener);
-  _lightboxOpener = null;
+  if (_galleryStale) { renderGallery(_selectedStation); _galleryStale = false; }
+  // The opener is gone if the grid was rebuilt for a new station: fall back to
+  // the same direction's photo, then the close button. Never <main> — it is
+  // inert while the gallery dialog is still open.
+  const target = (_lightboxOpener && _lightboxOpener.isConnected) ? _lightboxOpener
+    : (photoGrid.querySelector(`.photo-btn[data-dir="${_lightboxDir}"]`) || document.getElementById("modal-close"));
+  restoreFocus(target);
+  _lightboxOpener = null; _lightboxStation = null; _lightboxDir = null;
 });
 document.getElementById("lightbox-close").addEventListener("click", () => lightbox.close());
 lightbox.addEventListener("click", (e) => { if (e.target === lightbox) lightbox.close(); });
+document.getElementById("lightbox-prev").addEventListener("click", () => stepLightboxStation(-1));
+document.getElementById("lightbox-next").addEventListener("click", () => stepLightboxStation(+1));
+
+// ←/→ step stations in whichever dialog is open. The listeners sit on the
+// dialogs themselves (siblings, not nested) so only the open one reacts. Arrow
+// keys aren't printable characters, so this is outside the ?kbd=off opt-out
+// (WCAG 2.1.4 covers letters, punctuation, numbers and symbols).
+function arrowStepper(step) {
+  return (e) => {
+    if (e.altKey || e.ctrlKey || e.metaKey) return;
+    if (e.key === "ArrowLeft")       { e.preventDefault(); step(-1); }
+    else if (e.key === "ArrowRight") { e.preventDefault(); step(+1); }
+  };
+}
+modal.addEventListener("keydown", arrowStepper(stepGalleryStation));
+lightbox.addEventListener("keydown", arrowStepper(stepLightboxStation));
+
+// Horizontal swipe on the enlarged photo steps stations — lightbox only; in
+// the gallery grid it would fight vertical scrolling.
+const SWIPE_MIN_PX = 50;
+let _touchStart = null;
+lightbox.addEventListener("touchstart", (e) => {
+  const t = e.changedTouches[0];
+  _touchStart = e.touches.length === 1 ? { x: t.clientX, y: t.clientY } : null;
+}, { passive: true });
+lightbox.addEventListener("touchend", (e) => {
+  if (!_touchStart) return;
+  const t = e.changedTouches[0];
+  const dx = t.clientX - _touchStart.x, dy = t.clientY - _touchStart.y;
+  _touchStart = null;
+  if (Math.abs(dx) < SWIPE_MIN_PX || Math.abs(dx) <= 2 * Math.abs(dy)) return;
+  e.preventDefault();   // swallow the synthesized click, which would hit the backdrop-close handler
+  stepLightboxStation(dx < 0 ? +1 : -1);
+}, { passive: false });
 
 // ── Info modal ────────────────────────────────────────────────────────────────
 MCO.initInfoModal({ dialog: infoModal, trigger: document.getElementById("btn-info") });
